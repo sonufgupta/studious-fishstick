@@ -11,10 +11,10 @@
 <div class="app-shell">
   <header class="topbar">
     <div>
-      <div class="eyebrow">LOCAL-FIRST • NO FIREBASE</div>
+      <div class="eyebrow">LOCAL-FIRST • NO FIREBASE • NO SERIAL DATA SAVED</div>
       <h1>Serial Export Desk</h1>
     </div>
-    <div class="local-badge"><span></span> Local Storage</div>
+    <div class="local-badge"><span></span> Item Names Only</div>
   </header>
 
   <main class="workspace">
@@ -22,9 +22,9 @@
       <div class="card-heading">
         <div>
           <h2>Create Sales Serial Excel</h2>
-          <p>Enter shop, invoice/order number, select a product and paste serial numbers separated by commas.</p>
+          <p>Shop + Invoice + Items + Serial Numbers → Excel. Only Item Names are remembered by this browser.</p>
         </div>
-        <button id="clearDraftBtn" class="ghost-btn" type="button">Clear</button>
+        <button id="clearDraftBtn" class="ghost-btn" type="button">Clear Current</button>
       </div>
 
       <div class="field">
@@ -44,7 +44,7 @@
       <div class="bottom-actions">
         <div class="export-hint">
           <strong>Enter</strong> inside a serial box = Generate Excel
-          <span>or use the button below</span>
+          <span>After download, the page refreshes and serial data is cleared.</span>
         </div>
         <button id="generateBtn" class="generate-btn" type="button">DONE &amp; GENERATE EXCEL</button>
       </div>
@@ -54,18 +54,17 @@
       <div class="mini-title">Live Summary</div>
       <div class="stat"><span>Items</span><strong id="itemCount">0</strong></div>
       <div class="stat"><span>Total Pieces</span><strong id="pieceCount">0</strong></div>
-      <div class="stat"><span>Saved Products</span><strong id="savedProductCount">0</strong></div>
+      <div class="stat"><span>Saved Item Names</span><strong id="savedProductCount">0</strong></div>
       <div class="note">
-        <b>Offline-ready data</b>
-        <p>Product names are stored only in this browser using LocalStorage. No Firebase or cloud database is used.</p>
+        <b>Browser Storage Rule</b>
+        <p>Only Item Names are stored in LocalStorage. Shop Name, Invoice Number and Serial Numbers are temporary and are cleared when Excel is generated.</p>
       </div>
-      <div class="version">Version 1.0 • Browser Local</div>
+      <div class="version">Version 2.0 • Local Browser</div>
     </aside>
   </main>
 </div>
 
 <div id="toast" class="toast" role="status"></div>
-
 <script src="app.js"></script>
 </body>
 </html>
