@@ -304,60 +304,327 @@
     return candidate;
   }
 
-  function workbookXml(shop, invoice, items) {
-    const usedSheets = new Set();
+  // ---------------- REAL XLSX GENERATOR ----------------
+  // XLSX is a ZIP package containing XML files. This implementation uses
+  // "STORE" (no compression), which is fully valid for Excel and avoids
+  // any external library/CDN. The generated file is a genuine .xlsx file.
 
-    const sheets = items.map(item => {
-      const rows = [];
+  function crc32(bytes) {
+    let crc = 0 ^ (-1);
 
-      rows.push(
-        `<Row><Cell ss:MergeAcross="1" ss:StyleID="Title"><Data ss:Type="String">${xmlEscape(item.product)}</Data></Cell></Row>`
-      );
-      rows.push(`<Row/>`);
-      rows.push(
-        `<Row><Cell ss:StyleID="Header"><Data ss:Type="String">S.No.</Data></Cell><Cell ss:StyleID="Header"><Data ss:Type="String">Serial Number</Data></Cell></Row>`
-      );
+    for (let i = 0; i < bytes.length; i++) {
+      crc ^= bytes[i];
+      for (let j = 0; j < 8; j++) {
+        crc = (crc >>> 1) ^ (0xEDB88320 & -(crc & 1));
+      }
+    }
 
-      item.serials.forEach((serial, i) => {
-        rows.push(
-          `<Row><Cell><Data ss:Type="Number">${i + 1}</Data></Cell><Cell><Data ss:Type="String">${xmlEscape(serial)}</Data></Cell></Row>`
-        );
-      });
-
-      rows.push(`<Row/>`);
-      rows.push(
-        `<Row><Cell ss:StyleID="Total"><Data ss:Type="String">TOTAL PCS</Data></Cell><Cell ss:StyleID="Total"><Data ss:Type="Number">${item.serials.length}</Data></Cell></Row>`
-      );
-
-      const sheetName = uniqueSheetName(item.product, usedSheets);
-
-      return `<Worksheet ss:Name="${xmlEscape(sheetName)}"><Table ss:ExpandedColumnCount="2" ss:ExpandedRowCount="${rows.length}">${rows.join("")}</Table></Worksheet>`;
-    }).join("");
-
-    const totalPieces = items.reduce((n, x) => n + x.serials.length, 0);
-
-    return `<?xml version="1.0"?>
-<?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:o="urn:schemas-microsoft-com:office:office"
- xmlns:x="urn:schemas-microsoft-com:office:excel"
- xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
-<Styles>
-<Style ss:ID="Default" ss:Name="Normal"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="11"/></Style>
-<Style ss:ID="Title"><Font ss:Bold="1" ss:Size="15"/><Alignment ss:Horizontal="Left"/></Style>
-<Style ss:ID="Header"><Font ss:Bold="1"/><Interior ss:Color="#D9EAF7" ss:Pattern="Solid"/></Style>
-<Style ss:ID="Total"><Font ss:Bold="1"/><Interior ss:Color="#E2F3EC" ss:Pattern="Solid"/></Style>
-</Styles>
-<Worksheet ss:Name="Summary"><Table>
-<Row><Cell><Data ss:Type="String">Shop Name</Data></Cell><Cell><Data ss:Type="String">${xmlEscape(shop)}</Data></Cell></Row>
-<Row><Cell><Data ss:Type="String">Sales Order / Invoice</Data></Cell><Cell><Data ss:Type="String">${xmlEscape(invoice)}</Data></Cell></Row>
-<Row><Cell><Data ss:Type="String">Total Items</Data></Cell><Cell><Data ss:Type="Number">${items.length}</Data></Cell></Row>
-<Row><Cell><Data ss:Type="String">Total Pieces</Data></Cell><Cell><Data ss:Type="Number">${totalPieces}</Data></Cell></Row>
-</Table></Worksheet>${sheets}</Workbook>`;
+    return (crc ^ (-1)) >>> 0;
   }
 
-  function downloadBlob(content, name, mime) {
-    const blob = new Blob([content], { type: mime });
+  function u16(n) {
+    return new Uint8Array([n & 255, (n >>> 8) & 255]);
+  }
+
+  function u32(n) {
+    return new Uint8Array([
+      n & 255,
+      (n >>> 8) & 255,
+      (n >>> 16) & 255,
+      (n >>> 24) & 255
+    ]);
+  }
+
+  function concatBytes(...arrays) {
+    const total = arrays.reduce((n, a) => n + a.length, 0);
+    const out = new Uint8Array(total);
+    let offset = 0;
+
+    arrays.forEach(a => {
+      out.set(a, offset);
+      offset += a.length;
+    });
+
+    return out;
+  }
+
+  function zipStore(files) {
+    const encoder = new TextEncoder();
+    const localParts = [];
+    const centralParts = [];
+    let offset = 0;
+
+    files.forEach(file => {
+      const nameBytes = encoder.encode(file.name);
+      const dataBytes = encoder.encode(file.data);
+      const crc = crc32(dataBytes);
+
+      const local = concatBytes(
+        new Uint8Array([0x50,0x4b,0x03,0x04]),
+        u16(20),              // version needed
+        u16(0x0800),          // UTF-8 filename
+        u16(0),               // STORE
+        u16(0), u16(0),       // time/date
+        u32(crc),
+        u32(dataBytes.length),
+        u32(dataBytes.length),
+        u16(nameBytes.length),
+        u16(0),
+        nameBytes,
+        dataBytes
+      );
+
+      const central = concatBytes(
+        new Uint8Array([0x50,0x4b,0x01,0x02]),
+        u16(20),              // made by
+        u16(20),              // version needed
+        u16(0x0800),
+        u16(0),
+        u16(0), u16(0),
+        u32(crc),
+        u32(dataBytes.length),
+        u32(dataBytes.length),
+        u16(nameBytes.length),
+        u16(0),               // extra
+        u16(0),               // comment
+        u16(0),               // disk
+        u16(0),               // internal attrs
+        u32(0),               // external attrs
+        u32(offset),
+        nameBytes
+      );
+
+      localParts.push(local);
+      centralParts.push(central);
+      offset += local.length;
+    });
+
+    const centralStart = offset;
+    const central = concatBytes(...centralParts);
+    const local = concatBytes(...localParts);
+    const centralSize = central.length;
+    const count = files.length;
+
+    const endRecord = concatBytes(
+      new Uint8Array([0x50,0x4b,0x05,0x06]),
+      u16(0), u16(0),
+      u16(count), u16(count),
+      u32(centralSize),
+      u32(centralStart),
+      u16(0)
+    );
+
+    return concatBytes(local, central, endRecord);
+  }
+
+  function cellRef(col, row) {
+    let n = col;
+    let letters = "";
+
+    while (n > 0) {
+      const r = (n - 1) % 26;
+      letters = String.fromCharCode(65 + r) + letters;
+      n = Math.floor((n - 1) / 26);
+    }
+
+    return `${letters}${row}`;
+  }
+
+  function inlineCell(ref, value, style = "") {
+    const styleAttr = style ? ` s="${style}"` : "";
+    return `<c r="${ref}" t="inlineStr"${styleAttr}><is><t xml:space="preserve">${xmlEscape(value)}</t></is></c>`;
+  }
+
+  function numberCell(ref, value, style = "") {
+    const styleAttr = style ? ` s="${style}"` : "";
+    return `<c r="${ref}"${styleAttr}><v>${Number(value) || 0}</v></c>`;
+  }
+
+  function makeSheetXml(rows) {
+    const rowXml = rows.map(row =>
+      `<row r="${row.r}">${row.cells.join("")}</row>`
+    ).join("");
+
+    return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<sheetViews><sheetView workbookViewId="0"/></sheetViews>
+<sheetFormatPr defaultRowHeight="18"/>
+<cols>
+<col min="1" max="1" width="12" customWidth="1"/>
+<col min="2" max="2" width="55" customWidth="1"/>
+</cols>
+<sheetData>${rowXml}</sheetData>
+</worksheet>`;
+  }
+
+  function makeItemSheetXml(item) {
+    const rows = [];
+
+    rows.push({
+      r: 1,
+      cells: [
+        `<c r="A1" t="inlineStr" s="2"><is><t xml:space="preserve">${xmlEscape(item.product)}</t></is></c>`
+      ]
+    });
+
+    rows.push({ r: 2, cells: [] });
+
+    rows.push({
+      r: 3,
+      cells: [
+        inlineCell("A3", "S.No.", "1"),
+        inlineCell("B3", "Serial Number", "1")
+      ]
+    });
+
+    item.serials.forEach((serial, i) => {
+      const row = i + 4;
+      rows.push({
+        r: row,
+        cells: [
+          numberCell(`A${row}`, i + 1),
+          inlineCell(`B${row}`, serial)
+        ]
+      });
+    });
+
+    const totalRow = item.serials.length + 5;
+
+    rows.push({ r: totalRow - 1, cells: [] });
+
+    rows.push({
+      r: totalRow,
+      cells: [
+        inlineCell(`A${totalRow}`, "TOTAL PCS", "3"),
+        numberCell(`B${totalRow}`, item.serials.length, "3")
+      ]
+    });
+
+    return makeSheetXml(rows);
+  }
+
+  function makeSummarySheetXml(shop, invoice, items) {
+    const totalPieces = items.reduce((n, x) => n + x.serials.length, 0);
+
+    const rows = [
+      { r: 1, cells: [inlineCell("A1", "Shop Name", "1"), inlineCell("B1", shop)] },
+      { r: 2, cells: [inlineCell("A2", "Sales Order / Invoice", "1"), inlineCell("B2", invoice)] },
+      { r: 3, cells: [inlineCell("A3", "Total Items", "1"), numberCell("B3", items.length)] },
+      { r: 4, cells: [inlineCell("A4", "Total Pieces", "1"), numberCell("B4", totalPieces)] },
+      { r: 6, cells: [inlineCell("A6", "Item Name", "1"), inlineCell("B6", "Total PCS", "1")] }
+    ];
+
+    items.forEach((item, i) => {
+      rows.push({
+        r: 7 + i,
+        cells: [
+          inlineCell(`A${7+i}`, item.product),
+          numberCell(`B${7+i}`, item.serials.length)
+        ]
+      });
+    });
+
+    return makeSheetXml(rows);
+  }
+
+  function buildXlsx(shop, invoice, items) {
+    const used = new Set(["summary"]);
+    const sheetInfos = [];
+
+    items.forEach(item => {
+      sheetInfos.push({
+        name: uniqueSheetName(item.product, used),
+        xml: makeItemSheetXml(item)
+      });
+    });
+
+    const allSheets = [
+      { name: "Summary", xml: makeSummarySheetXml(shop, invoice, items) },
+      ...sheetInfos
+    ];
+
+    const workbookSheets = allSheets.map((sheet, i) =>
+      `<sheet name="${xmlEscape(sheet.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`
+    ).join("");
+
+    const workbookXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+ xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheets>${workbookSheets}</sheets>
+</workbook>`;
+
+    const workbookRels = allSheets.map((sheet, i) =>
+      `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`
+    ).join("");
+
+    const workbookRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+${workbookRels}
+</Relationships>`;
+
+    const contentTypesSheets = allSheets.map((sheet, i) =>
+      `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`
+    ).join("");
+
+    const contentTypesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+${contentTypesSheets}
+</Types>`;
+
+    const rootRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`;
+
+    const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<numFmts count="0"/>
+<fonts count="2">
+<font><sz val="11"/><name val="Calibri"/></font>
+<font><b/><sz val="11"/><name val="Calibri"/></font>
+</fonts>
+<fills count="2">
+<fill><patternFill patternType="none"/></fill>
+<fill><patternFill patternType="gray125"/></fill>
+</fills>
+<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+<cellXfs count="4">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+<xf numFmtId="0" fontId="1" fillId="0" borderId="0"/>
+<xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyAlignment="1"><alignment horizontal="left"/></xf>
+<xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyAlignment="1"><alignment horizontal="left"/></xf>
+</cellXfs>
+<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>`;
+
+    const files = [
+      { name: "[Content_Types].xml", data: contentTypesXml },
+      { name: "_rels/.rels", data: rootRelsXml },
+      { name: "xl/workbook.xml", data: workbookXml },
+      { name: "xl/_rels/workbook.xml.rels", data: workbookRelsXml },
+      { name: "xl/styles.xml", data: stylesXml }
+    ];
+
+    allSheets.forEach((sheet, i) => {
+      files.push({
+        name: `xl/worksheets/sheet${i + 1}.xml`,
+        data: sheet.xml
+      });
+    });
+
+    return zipStore(files);
+  }
+
+  function downloadXlsx(bytes, name) {
+    const blob = new Blob([bytes], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    });
+
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
 
@@ -417,7 +684,7 @@
       return;
     }
 
-    // Save only the item names. Serial numbers are NOT saved anywhere.
+    // Only Item Names are persisted.
     const currentProducts = getProducts();
     items.forEach(item => {
       if (!currentProducts.some(p => p.toLowerCase() === item.product.toLowerCase())) {
@@ -426,19 +693,20 @@
     });
     saveProducts(currentProducts);
 
-    const xml = workbookXml(shop, invoice, items);
-    const fileName = filename(shop, invoice);
+    try {
+      const xlsxBytes = buildXlsx(shop, invoice, items);
+      const fileName = `${safeFilePart(shop)}_${invoiceFourDigits(invoice)}_${new Date().toLocaleDateString("en-GB").replace(/\//g, "-")}.xlsx`;
 
-    // The file is handed to the device/browser download system.
-    // After the download is initiated, this page is reset and temporary
-    // Shop/Invoice/Serial data disappears. Only Item Names remain in LocalStorage.
-    downloadBlob(xml, fileName, "application/vnd.ms-excel");
+      downloadXlsx(xlsxBytes, fileName);
 
-    showToast(`Excel downloaded • ${items.reduce((n, x) => n + x.serials.length, 0)} PCS`);
+      showToast(`Real Excel (.xlsx) downloaded • ${items.reduce((n, x) => n + x.serials.length, 0)} PCS`);
 
-    setTimeout(() => {
-      window.location.reload();
-    }, 900);
+      // Clear temporary page data after download is handed to the device.
+      setTimeout(() => window.location.reload(), 1000);
+    } catch (err) {
+      console.error("XLSX generation failed:", err);
+      showToast("Excel generation failed. Please try again.");
+    }
   }
 
   els.shop.addEventListener("input", updateSummary);
