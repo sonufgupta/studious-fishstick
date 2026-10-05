@@ -81,76 +81,195 @@
     const cleaned = String(serialText || "")
       .replace(/<br\s*\/?\s*>/gi, " ")
       .replace(/\*+/g, " ")
+      .replace(/\|/g, " ")
       .replace(/\s+/g, " ")
       .trim();
 
     if (!cleaned) return [];
 
-    // Zoho normally separates serials with commas. Newline/space is accepted
-    // only because browser paste can alter whitespace; invalid tokens are NOT silently dropped.
-    const tokens = cleaned.split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
+    // Zoho's copied Shipment Order uses commas between serials.
+    // We deliberately do NOT silently discard bad tokens.
+    const tokens = cleaned.split(/[,;]+/).map(x => x.trim()).filter(Boolean);
     if (!tokens.length || tokens.some(x => !validSerial(x))) return [];
     return tokens;
   }
 
+  function cleanProductName(value) {
+    let s = stripMd(value)
+      .replace(/^\s*\|?\s*\d+\s*\|\s*/i, "")
+      .replace(/\|.*$/s, " ")
+      .trim();
+
+    // When copied from the rendered Zoho table, HSN / Qty / Pcs can be
+    // separated onto their own lines. Remove only the known table metadata.
+    s = s.replace(/(?:\s|\n)+\d{4,12}\s+(?:\d+)\s+(?:Pcs?|Pieces?)\s*$/i, "");
+    s = s.replace(/(?:\s|\n)+\d{4,12}\s*$/i, "");
+    s = s.replace(/(?:\s|\n)+\d+\s+(?:Pcs?|Pieces?)\s*$/i, "");
+    return s.replace(/\s+/g, " ").trim();
+  }
+
   function productFromCell(cell) {
     const before = String(cell).split(/Serial\s*Number\(s\)\s*:/i)[0];
-    const lines = before
-      .replace(/<br\s*\/?\s*>/gi, "\n")
-      .split(/\n+/)
-      .map(x => stripMd(x))
-      .filter(Boolean);
-
-    // The first meaningful line is the actual item name. HSN/Qty are outside this cell.
-    return lines[0] || "";
+    return cleanProductName(before);
   }
 
-  function parseItemRow(row) {
-    // IMPORTANT: This is the exact Zoho markdown structure:
-    // | item no | ITEM + Serial Number(s): ... | HSN | Qty | Pcs |
-    const m = String(row).match(/^\s*\|\s*(\d+)\s*\|\s*([\s\S]*?)\s*\|\s*(\d{4,12})\s*\|\s*(\d+)\s*\|\s*(?:pcs?|pieces?)\s*\|\s*$/i);
-    if (!m) return null;
-
-    const itemNo = Number(m[1]);
-    const cell = m[2];
-    const qty = Number(m[4]);
-    const marker = /Serial\s*Number\(s\)\s*:/i.exec(cell);
-    if (!marker || !Number.isInteger(itemNo) || itemNo < 1 || !Number.isInteger(qty) || qty < 1) return null;
-
-    const product = productFromCell(cell);
-    const serialText = cell.slice(marker.index + marker[0].length);
-    const serials = extractSerialList(serialText);
-
-    // Never return a partial extraction.
-    if (!product || serials.length !== qty) return null;
-    return { itemNo, product, serials, qty };
-  }
-
-  function extractItems(text) {
+  function parseMarkdownItems(text) {
     const items = [];
-
-    // Parse across the complete pasted text, not line-by-line only.
-    // This survives browser/textarea wrapping and Zoho's very long table rows.
     const rowRe = /(?:^|\n)\s*\|\s*(\d+)\s*\|\s*([\s\S]*?)\s*\|\s*(\d{4,12})\s*\|\s*(\d+)\s*\|\s*(?:pcs?|pieces?)\s*\|\s*(?=\n|$)/gi;
     let m;
     while ((m = rowRe.exec(text))) {
-      const row = m[0].replace(/^\s*\n?/, "").trim();
-      const item = parseItemRow(row);
-      if (item) items.push(item);
+      const itemNo = Number(m[1]);
+      const cell = m[2];
+      const qty = Number(m[4]);
+      const marker = /Serial\s*Number\(s\)\s*:/i.exec(cell);
+      if (!marker) continue;
+      const product = productFromCell(cell);
+      const serials = extractSerialList(cell.slice(marker.index + marker[0].length));
+      if (!product || !Number.isInteger(qty) || qty < 1 || serials.length !== qty) continue;
+      items.push({ itemNo, product, serials, qty });
     }
+    return items;
+  }
 
-    // Require a clean sequential table: 1,2,3,... with no skipped rows.
+  // IMPORTANT: Copying a rendered Zoho table into a textarea does NOT always
+  // preserve Markdown pipes. It can become visually ordered text like:
+  //   1  Geonix Optima ... 84733099 15 Pcs
+  //   Serial Number(s): SN1, SN2...
+  //   2  Geonix ...
+  // Therefore we parse around each explicit Serial Number(s) marker and use
+  // the nearest numbered item row above it. This is the format shown by the
+  // user's screenshot.
+  function parseRenderedItems(text) {
+    const lines = String(text || "").split("\n");
+    const markers = [];
+    const serialMarkerRe = /Serial\s*Number\(s\)\s*:/i;
+
+    lines.forEach((line, index) => {
+      if (serialMarkerRe.test(line)) markers.push({ index, line });
+    });
+    if (!markers.length) return [];
+
+    const items = [];
+
+    markers.forEach((marker, markerIndex) => {
+      let itemLineIndex = -1;
+      let itemNo = 0;
+
+      // Search only backwards to the previous serial block. This prevents
+      // addresses, order dates and other numbers from being treated as items.
+      const floor = markerIndex === 0 ? 0 : markers[markerIndex - 1].index + 1;
+      for (let i = marker.index - 1; i >= floor; i--) {
+        const line = lines[i].trim();
+        if (!line) continue;
+
+        // Markdown row: | 1 | Product ...
+        let m = line.match(/^\|\s*(\d+)\s*\|\s*(.*)$/);
+        if (m) {
+          itemNo = Number(m[1]);
+          itemLineIndex = i;
+          break;
+        }
+
+        // Rendered/plain copy: 1  Product ... 84733099 15 Pcs
+        m = line.match(/^(\d+)\s+(.*)$/);
+        if (m && Number(m[1]) >= 1 && Number(m[1]) <= 9999) {
+          itemNo = Number(m[1]);
+          itemLineIndex = i;
+          break;
+        }
+      }
+
+      if (itemLineIndex < 0) return;
+
+      // Everything after the item number and before Serial Number(s) belongs
+      // to the item cell. It may span several lines in copied Zoho output.
+      let productSource = lines.slice(itemLineIndex, marker.index).join(" ");
+      productSource = productSource.replace(/^\s*\|\s*\d+\s*\|\s*/i, "");
+      productSource = productSource.replace(/^\s*\d+\s+/, "");
+
+      // Remove the table's HSN / Qty / Pcs tail, but never remove numbers
+      // from the actual product name unless they are in the known table tail.
+      const product = cleanProductName(productSource);
+
+      // Serial text can continue on multiple lines until the next numbered
+      // item row. For this marker, collect only up to the next item marker.
+      const nextFloor = markerIndex + 1 < markers.length ? markers[markerIndex + 1].index : lines.length;
+      const serialLines = [marker.line.replace(serialMarkerRe, "")];
+      for (let i = marker.index + 1; i < nextFloor; i++) {
+        const candidate = lines[i].trim();
+
+        // The next product row can appear BEFORE its Serial Number(s) marker.
+        // Stop here so that the next item's name is never treated as a serial.
+        if (/^\|\s*\d+\s*\|/.test(candidate) || /^\d+\s+.+/.test(candidate)) {
+          break;
+        }
+        serialLines.push(lines[i]);
+      }
+
+      // In rendered copy, HSN / Qty / Pcs can appear AFTER the serial list
+      // on separate lines (exactly as in the user's screenshot):
+      //   Serial Number(s): ...
+      //   84733099
+      //   10
+      //   Pcs
+      let serialText = serialLines.join(" ");
+
+      // Read Qty before removing the HSN/Qty/Pcs metadata.
+      const qtyFromProduct = productSource.match(/\b(\d+)\s+(?:Pcs?|Pieces?)\b\s*$/i);
+      const qtyFromSerialTail = serialText.match(/\b\d{4,12}\b\s+(\d+)\s+(?:Pcs?|Pieces?)\b/i);
+      const qtyFromSplitTail = serialText.match(/\b\d{4,12}\b\s+(\d+)\s+(?:Pcs?|Pieces?)\b/i);
+
+      let qty = qtyFromProduct ? Number(qtyFromProduct[1]) :
+                qtyFromSerialTail ? Number(qtyFromSerialTail[1]) :
+                qtyFromSplitTail ? Number(qtyFromSplitTail[1]) : null;
+
+      // Also support the copied Zoho layout where HSN, Qty and Pcs are
+      // separate visual lines.
+      if (!qty) {
+        const tailLines = serialLines.map(x => x.trim()).filter(Boolean);
+        for (let i = 0; i < tailLines.length - 2; i++) {
+          if (/^\d{4,12}$/.test(tailLines[i]) && /^\d+$/.test(tailLines[i + 1]) && /^(?:Pcs?|Pieces?)$/i.test(tailLines[i + 2])) {
+            qty = Number(tailLines[i + 1]);
+            break;
+          }
+        }
+      }
+
+      // Remove only known HSN / Qty / Pcs metadata from the serial text.
+      serialText = serialText
+        .replace(/\b\d{4,12}\b\s+\d+\s+(?:Pcs?|Pieces?)\b/gi, " ")
+        .replace(/\b\d{4,12}\b\s+\d+\s+$/gi, " ")
+        .replace(/\b\d{4,12}\b\s*$/gi, "")
+        .replace(/\b\d+\s+(?:Pcs?|Pieces?)\b/gi, " ");
+
+      const serials = extractSerialList(serialText);
+      if (!product || !itemNo || !serials.length || !qty) return;
+      if (serials.length !== qty) return;
+
+      items.push({ itemNo, product, serials, qty });
+    });
+
+    return items;
+  }
+
+  function extractItems(text) {
+    // First try the exact Markdown table format supplied in the user's paste.
+    let items = parseMarkdownItems(text);
+
+    // Then try the rendered Zoho copy format shown in the screenshot.
+    if (!items.length) items = parseRenderedItems(text);
+
     items.sort((a, b) => a.itemNo - b.itemNo);
-    const clean = [];
+    if (!items.length) return [];
+
+    // Require a clean sequential table: 1,2,3,...
     for (let i = 0; i < items.length; i++) {
       if (items[i].itemNo !== i + 1) return [];
-      clean.push(items[i]);
     }
 
-    // No duplicate item names and no duplicate serials.
     const products = new Set();
     const serials = new Set();
-    for (const item of clean) {
+    for (const item of items) {
       const pk = item.product.toUpperCase();
       if (products.has(pk)) return [];
       products.add(pk);
@@ -161,7 +280,7 @@
       }
     }
 
-    return clean;
+    return items;
   }
 
   function validateParsedData(data) {
