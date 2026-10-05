@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<meta name="description" content="Local-first Serial Number Excel Generator">
+<meta name="description" content="Shipment Order Serial Number Excel Generator">
 <title>Serial Export Desk</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -11,59 +11,42 @@
 <div class="app-shell">
   <header class="topbar">
     <div>
-      <div class="eyebrow">LOCAL-FIRST • NO FIREBASE • NO SERIAL DATA SAVED</div>
+      <div class="eyebrow">SHIPMENT TEXT → EXCEL</div>
       <h1>Serial Export Desk</h1>
+      <p class="subhead">Paste the complete Shipment Order text once. Shop, Sales Order, Items and Serial Numbers will be extracted automatically.</p>
     </div>
-    <div class="local-badge"><span></span> Item Names Only</div>
+    <div class="simple-badge"><span></span> Simple Mode</div>
   </header>
 
   <main class="workspace">
     <section class="card main-card">
       <div class="card-heading">
         <div>
-          <h2>Create Sales Serial Excel</h2>
-          <p>Shop + Invoice + Items + Serial Numbers → Excel. Only Item Names are remembered by this browser.</p>
+          <h2>Paste Complete Shipment Text</h2>
+          <p>One paste box only. Press <b>Enter</b> or click <b>DONE &amp; GENERATE EXCEL</b>.</p>
         </div>
-        <button id="clearDraftBtn" class="ghost-btn" type="button">Clear Current</button>
+        <button id="clearBtn" class="ghost-btn" type="button">Clear</button>
       </div>
 
       <div class="field">
-        <label for="shopName">Shop Name <b>*</b></label>
-        <input id="shopName" autocomplete="organization" placeholder="Enter shop name">
+        <label for="rawText">Shipment / Invoice Text <b>*</b></label>
+        <textarea id="rawText" class="raw-input" spellcheck="false" placeholder="Paste the complete text here...\n\nExample: Ship To → SRI COMPUTER WORLD\nSales Order# → SO-MH /26-27/370\nItem rows → Item Name + Serial Number(s): ..."></textarea>
+        <div class="help">The system automatically detects <b>Shop Name</b>, the number after <b>SO-MH /26-27/</b>, item names and every serial number.</div>
       </div>
 
-      <div class="field">
-        <label for="invoiceNo">Sales Order / Invoice Number <b>*</b></label>
-        <input id="invoiceNo" autocomplete="off" placeholder="Enter sales order or invoice number">
-      </div>
-
-      <div id="itemsContainer"></div>
-
-      <button id="addItemBtn" class="add-item-btn" type="button">＋ Add Another Item</button>
+      <div id="parsedPreview" class="preview hidden"></div>
 
       <div class="bottom-actions">
         <div class="export-hint">
-          <strong>Enter</strong> inside a serial box = Generate Excel
-          <span>After download, the page refreshes and serial data is cleared.</span>
+          <strong>Output:</strong> One Excel file
+          <span>3 items = exactly 3 sheets. No Summary sheet.</span>
+          <span>Filename: SHOP NAME + last Sales Order number + DATE</span>
         </div>
         <button id="generateBtn" class="generate-btn" type="button">DONE &amp; GENERATE EXCEL</button>
       </div>
     </section>
-
-    <aside class="card side-card">
-      <div class="mini-title">Live Summary</div>
-      <div class="stat"><span>Items</span><strong id="itemCount">0</strong></div>
-      <div class="stat"><span>Total Pieces</span><strong id="pieceCount">0</strong></div>
-      <div class="stat"><span>Saved Item Names</span><strong id="savedProductCount">0</strong></div>
-      <div class="note">
-        <b>Browser Storage Rule</b>
-        <p>Only Item Names are stored in LocalStorage. Shop Name, Invoice Number and Serial Numbers are temporary and are cleared when Excel is generated.</p>
-      </div>
-      <div class="version">Version 2.0 • Local Browser</div>
-    </aside>
   </main>
 </div>
-
 <div id="toast" class="toast" role="status"></div>
 <script src="app.js"></script>
 </body>
