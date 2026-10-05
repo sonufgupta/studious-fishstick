@@ -25,68 +25,101 @@
     .replace(/\s+/g, " ")
     .trim();
 
+  function normalizeSource(text) {
+    return String(text || "")
+      .replace(/\r/g, "")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&#xA0;/gi, " ")
+      .replace(/\u00a0/g, " ");
+  }
+
   function extractShop(text) {
-    const m = text.match(/Ship\s*To\s*(?:<br\s*\/?>|\n|\r\n)\s*(?:\[\s*)?\*{0,2}([^\]\n*|]+?)\*{0,2}(?:\]|\()/i);
-    if (m) return stripMd(m[1]);
-    const m2 = text.match(/Ship\s*To[\s\S]{0,80}?\[?\*{0,2}([^\]\n*|]+?)\*{0,2}\]?/i);
-    return m2 ? stripMd(m2[1]) : "";
+    // Strictly take the first bold/linked shop name immediately after "Ship To".
+    const m = text.match(/Ship\s*To\s*(?:<br\s*\/?>|\n)+\s*(?:\[\s*)?\*{0,2}\s*([^\]\n|*]+?)\s*\*{0,2}(?:\]\([^)]*\))?/i);
+    return m ? stripMd(m[1]) : "";
   }
 
   function extractInvoice(text) {
-    const m = text.match(/Sales\s*Order\s*#?\s*:?\s*\|?\s*([A-Z]{1,10}\s*-\s*[A-Z]{1,10}\s*\/\s*[^\s|]+\s*\/\s*\d+)/i)
-      || text.match(/Sales\s*Order\s*#?\s*:?\s*([^\n|]+)/i);
-    return m ? stripMd(m[1]).trim() : "";
+    // Do not guess from arbitrary numbers. Sales Order must have the expected SO-MH / FY / number structure.
+    const m = text.match(/Sales\s*Order\s*#?\s*:\s*\|?\s*(SO-MH\s*\/\s*\d{2}-\d{2}\s*\/\s*\d+)\s*(?:\||\n|$)/i);
+    return m ? m[1].replace(/\s+/g, " ").trim() : "";
   }
 
   function extractOrderNumber(invoice) {
-    const s = String(invoice || "").trim();
-    const m = s.match(/\/\s*(\d+)\s*$/);
-    if (m) return m[1];
-    const nums = s.match(/\d+/g) || [];
-    return nums.length ? nums[nums.length - 1] : "";
+    const m = String(invoice || "").match(/\/\s*(\d+)\s*$/);
+    return m ? m[1] : "";
+  }
+
+  function validSerial(serial) {
+    // Serial values are deliberately strict: no spaces, markdown, pipes or sentence text.
+    return /^[A-Za-z0-9][A-Za-z0-9._-]{5,79}$/.test(serial);
   }
 
   function parseSerials(cell) {
-    const m = String(cell || "").match(/Serial\s*Number\(s\)\s*:\s*([\s\S]*)/i);
+    const m = String(cell || "").match(/Serial\s*Number\(s\)\s*:\s*([\s\S]*?)(?=<\/td>|\|\s*\d{4,12}\s*\||$)/i);
     if (!m) return [];
     return m[1]
       .replace(/<br\s*\/?>/gi, " ")
       .replace(/\*+/g, "")
-      .split(/[,\n]+/)
+      .split(/[,,\n]+/)
       .map(x => x.trim())
-      .filter(x => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(x));
+      .filter(Boolean)
+      .filter(validSerial);
   }
 
   function extractItems(text) {
     const items = [];
-    // Primary parser: Markdown table rows containing item number, description, HSN and quantity.
-    const rowRe = /\|\s*\d+\s*\|\s*([\s\S]*?)\|\s*\d{4,12}\s*\|\s*\d+(?:\.\d+)?\s*\|\s*(?:pcs?|Pcs?)\s*\|/gi;
+    // IMPORTANT: only parse real Markdown shipment-table rows.
+    // No loose fallback is used, because false extraction is worse than asking for correction.
+    const rowRe = /\|\s*(\d+)\s*\|\s*([\s\S]*?)\|\s*(\d{4,12})\s*\|\s*(\d+(?:\.\d+)?)\s*\|\s*(pcs?|Pcs?)\s*\|/gi;
     let m;
     while ((m = rowRe.exec(text))) {
-      const cell = m[1];
-      const serials = parseSerials(cell);
-      const beforeSerial = cell.split(/Serial\s*Number\(s\)\s*:/i)[0];
-      const firstLine = beforeSerial.split(/<br\s*\/?>|\n/i)[0];
-      const product = stripMd(firstLine).replace(/\s{2,}/g, " ").trim();
-      if (product && serials.length) items.push({ product, serials });
-    }
+      const cell = m[2];
+      const qty = Number(m[4]);
+      const serialMatch = cell.match(/Serial\s*Number\(s\)\s*:/i);
+      if (!serialMatch) continue;
 
-    // Fallback: handle pasted plain text where table pipes were removed.
-    if (!items.length) {
-      const chunks = text.split(/(?=\b\d+\s*[.)|]\s+)/g);
-      chunks.forEach(chunk => {
-        const sm = chunk.match(/Serial\s*Number\(s\)\s*:\s*([\s\S]*?)(?=\n\s*\d+\s*[.)|]|$)/i);
-        if (!sm) return;
-        const serials = sm[1].split(/[,\n]+/).map(x => x.trim()).filter(x => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(x));
-        const product = stripMd(chunk.split(/Serial\s*Number\(s\)\s*:/i)[0]).replace(/^\d+\s*[.)|]\s*/, "").trim();
-        if (product && serials.length) items.push({ product, serials });
-      });
+      const beforeSerial = cell.slice(0, serialMatch.index);
+      const firstLine = beforeSerial.split(/<br\s*\/?>|\n/i)[0];
+      const product = stripMd(firstLine).trim();
+      const serials = parseSerials(cell);
+
+      if (!product || !Number.isFinite(qty) || qty < 1 || !serials.length) continue;
+      items.push({ product, serials, qty });
     }
     return items;
   }
 
+  function validateParsedData(data) {
+    const errors = [];
+    if (!data.shop) errors.push("Shop Name detect nahi hua.");
+    if (!data.invoice || !data.orderNo) errors.push("Sales Order number detect nahi hua.");
+    if (!data.items.length) errors.push("Shipment table me Item + Serial Number(s) detect nahi hue.");
+
+    const allSerials = new Set();
+    data.items.forEach((item, i) => {
+      if (item.serials.length !== item.qty) {
+        errors.push(`Item ${i + 1}: Qty ${item.qty} hai, lekin ${item.serials.length} serial numbers mile.`);
+      }
+      const local = new Set();
+      item.serials.forEach(serial => {
+        const key = serial.toUpperCase();
+        if (local.has(key)) errors.push(`Item ${i + 1}: duplicate serial ${serial}.`);
+        local.add(key);
+        if (allSerials.has(key)) errors.push(`Duplicate serial found across items: ${serial}.`);
+        allSerials.add(key);
+      });
+    });
+
+    const productKeys = data.items.map(x => x.product.toUpperCase());
+    if (new Set(productKeys).size !== productKeys.length) {
+      errors.push("Same Item Name multiple times mila. Excel generate nahi kiya gaya.");
+    }
+    return errors;
+  }
+
   function parseShipment(text) {
-    const t = cleanText(text);
+    const t = normalizeSource(text);
     const invoice = extractInvoice(t);
     return { shop: extractShop(t), invoice, orderNo: extractOrderNumber(invoice), items: extractItems(t) };
   }
@@ -94,15 +127,18 @@
   function updatePreview() {
     const data = parseShipment(raw.value);
     if (!raw.value.trim()) { preview.classList.add("hidden"); return data; }
+    const errors = validateParsedData(data);
     const pieces = data.items.reduce((n, x) => n + x.serials.length, 0);
     preview.innerHTML = `
-      <div class="preview-title">Auto Extracted</div>
+      <div class="preview-title">Auto Extracted ${errors.length ? "• CHECK REQUIRED" : "• READY"}</div>
       <div class="preview-grid">
         <div><span>Shop:</span> <b>${esc(data.shop || "Not detected")}</b></div>
         <div><span>Sales Order:</span> <b>${esc(data.invoice || "Not detected")}</b></div>
-        <div><span>Last Number:</span> <b>${esc(data.orderNo || "Not detected")}</b></div>
+        <div><span>Excel Number:</span> <b>${esc(data.orderNo || "Not detected")}</b></div>
         <div><span>Items / Serial PCS:</span> <b>${data.items.length} / ${pieces}</b></div>
-      </div>`;
+      </div>
+      ${data.items.length ? `<div class="preview-items">${data.items.map((x,i)=>`<div><b>${i+1}. ${esc(x.product)}</b> — Qty ${x.qty}, Serial ${x.serials.length}</div>`).join("")}</div>` : ""}
+      ${errors.length ? `<div class="preview-errors">${errors.map(esc).map(x=>`<div>• ${x}</div>`).join("")}</div>` : ""}`;
     preview.classList.remove("hidden");
     return data;
   }
@@ -167,9 +203,12 @@
   function generateExcel(){
     const data=parseShipment(raw.value);
     if(!raw.value.trim()){showToast("Please paste the complete Shipment Order text.");raw.focus();return;}
-    if(!data.shop){showToast("Shop Name detect nahi hua.");return;}
-    if(!data.orderNo){showToast("Sales Order number detect nahi hua.");return;}
-    if(!data.items.length){showToast("Item + Serial Number(s) detect nahi hue.");return;}
+    const errors = validateParsedData(data);
+    if(errors.length){
+      updatePreview();
+      showToast(errors[0]);
+      return;
+    }
     const bytes=buildXlsx(data.items);
     const d=new Date(),date=`${String(d.getDate()).padStart(2,"0")}-${String(d.getMonth()+1).padStart(2,"0")}-${d.getFullYear()}`;
     const fileName=`${safeFilePart(data.shop)}_${safeFilePart(data.orderNo)}_${date}.xlsx`;
