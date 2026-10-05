@@ -78,72 +78,95 @@
   function parsePage(pageRows, pageNumber) {
     const lines = pageRows.map(r => clean(r.text)).filter(Boolean);
     const out = [];
-    const serialMarkers = [];
 
+    // Zoho Shipment PDFs have a reliable structure:
+    //   <item number> <item name>
+    //   MODEL / WARRANTY (optional)
+    //   Serial Number(s): <serials...>
+    //   <HSN> <Qty>
+    //   pcs
+    // The item header is ALWAYS a numbered line containing text. A page number
+    // by itself (for example "2") must never be treated as an item.
+    const headers = [];
     for (let i = 0; i < lines.length; i++) {
-      if (/Serial Number\(s\)\s*:/i.test(lines[i])) serialMarkers.push(i);
+      const m = lines[i].match(/^(\d+)\s+(.+)$/);
+      if (!m) continue;
+
+      const n = Number(m[1]);
+      if (!Number.isInteger(n) || n < 1 || n > 999) continue;
+
+      const text = clean(m[2]);
+      if (/^Item\s*&\s*Description/i.test(text)) continue;
+      if (/^(Sales Order|Order Date|Total Qty|Number of Boxes|Weight|Shipment Order|Shipment Date|Shipping Carrier|TRACKING|Place of Supply)/i.test(text)) continue;
+
+      headers.push({ index: i, no: n, text });
     }
 
-    for (let k = 0; k < serialMarkers.length; k++) {
-      const serialIndex = serialMarkers[k];
-      const blockEnd = k + 1 < serialMarkers.length ? serialMarkers[k + 1] : lines.length;
-
-      let headerIndex = -1;
-      let itemNo = null;
-      let inlineName = '';
-
-      // Look backwards for the item number. Supports both:
-      // "1 Product Name" and a separate "1" line followed by the product.
-      for (let j = serialIndex - 1; j >= Math.max(0, serialIndex - 12); j--) {
-        const m = lines[j].match(/^(\d+)(?:\s+(.*))?$/);
-        if (!m) continue;
-        const n = Number(m[1]);
-        if (n < 1 || n > 999) continue;
-        headerIndex = j;
-        itemNo = n;
-        inlineName = clean(m[2] || '');
-        break;
+    const serialMarkers = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (/Serial Number\(s\)\s*:/i.test(lines[i])) {
+        serialMarkers.push(i);
       }
+    }
 
-      if (headerIndex < 0 || itemNo == null) continue;
-
-      // Reject page numbers/document metadata accidentally interpreted as items.
-      const headerText = inlineName;
-      if (/^(Sales Order|Order Date|Total Qty|Number of Boxes|Weight|Shipment Order|Shipment Date|Shipping Carrier|TRACKING|Item\s*&\s*Description)/i.test(headerText)) continue;
-
-      const nameParts = [];
-      if (inlineName) nameParts.push(inlineName);
-
-      for (let j = headerIndex + 1; j < serialIndex; j++) {
-        const t = lines[j];
-        if (!t) continue;
-        if (/^MODEL\s*NO\./i.test(t) || /WARRANTY/i.test(t)) continue;
-        if (/^#\s*Item\s*&\s*Description/i.test(t) || /^HSN\/SAC/i.test(t)) continue;
-        if (/^\d{6,12}\s+\d+$/.test(t) || /^pcs?$/i.test(t)) continue;
-        nameParts.push(t);
+    for (const serialIndex of serialMarkers) {
+      // Find the nearest numbered item header ABOVE this serial block.
+      let header = null;
+      for (let h = headers.length - 1; h >= 0; h--) {
+        if (headers[h].index < serialIndex) {
+          header = headers[h];
+          break;
+        }
       }
+      if (!header) continue;
 
-      let product = clean(nameParts.join(' '))
+      const itemNo = header.no;
+      let product = clean(header.text)
         .replace(/\s+MODEL\s*NO\..*$/i, '')
         .replace(/\s+\d+\s*YEARS?\s+WARRANTY.*$/i, '')
         .replace(/\s+\d+\s*YEAR\s+WARRANTY.*$/i, '')
         .trim();
 
-      if (!product) continue;
+      // Do not allow table metadata to become the product name.
+      if (!product || /^Item\s*&\s*Description/i.test(product)) continue;
 
-      const serialParts = [lines[serialIndex].replace(/^.*?Serial Number\(s\)\s*:\s*/i, '')];
+      // The next numbered item header is the hard boundary of this item.
+      const nextHeader = headers.find(h => h.index > header.index);
+      const blockEnd = nextHeader ? nextHeader.index : lines.length;
+
+      const serialParts = [];
       let qty = null;
       let hsn = null;
+      let serialSectionEnded = false;
 
-      for (let j = serialIndex + 1; j < blockEnd; j++) {
+      for (let j = serialIndex; j < blockEnd; j++) {
         const t = lines[j];
-        const hm = t.match(/^(\d{6,12})\s+(\d+)$/);
-        if (hm) { hsn = hm[1]; qty = Number(hm[2]); continue; }
+
+        if (j === serialIndex) {
+          const first = t.replace(/^.*?Serial Number\(s\)\s*:\s*/i, '');
+          if (first) serialParts.push(first);
+          continue;
+        }
+
+        // Qty is printed by Zoho as: HSN Qty / pcs on separate lines.
+        const hq = t.match(/^(\d{6,12})\s+(\d+)$/);
+        if (hq) {
+          hsn = hq[1];
+          qty = Number(hq[2]);
+          serialSectionEnded = true;
+          continue;
+        }
+
         if (/^pcs?$/i.test(t)) continue;
+
+        // Once HSN/Qty has been found, nothing after it belongs to serials.
+        if (serialSectionEnded) continue;
+
         serialParts.push(t);
       }
 
-      const serials = serialParts.join(' ')
+      const serials = serialParts
+        .join(' ')
         .split(/[\s,;]+/)
         .map(s => s.trim())
         .filter(Boolean)
@@ -152,7 +175,15 @@
         .filter(s => !/^pcs?$/i.test(s));
 
       if (!serials.length) continue;
-      out.push({ no: itemNo, product, serials, qty, hsn, page: pageNumber });
+
+      out.push({
+        no: itemNo,
+        product,
+        serials,
+        qty,
+        hsn,
+        page: pageNumber
+      });
     }
 
     return out;
