@@ -20,38 +20,49 @@
     .replace(/&nbsp;/gi, " ")
     .replace(/&#xA0;/gi, " ");
 
-  const stripMd = s => String(s ?? "")
-    .replace(/<br\s*\/?\s*>/gi, "\n")
-    .replace(/\[\s*\*\*(.*?)\*\*\s*\]\([^)]*\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/\*\*/g, "")
-    .replace(/`/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
     ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&apos;"}[c])
   );
 
+  // ---------------- STRICT ZOHO SHIPMENT PARSER ----------------
+
   function normalizeSource(text) {
-    return cleanText(text).replace(/\n[ \t]+/g, "\n");
+    return cleanText(text)
+      .replace(/\u200b/g, "")
+      .replace(/\r\n?/g, "\n");
   }
 
-  // ---------------- STRICT HEADER EXTRACTION ----------------
+  function stripMd(s) {
+    return String(s ?? "")
+      .replace(/<br\s*\/?\s*>/gi, "\n")
+      .replace(/\[\s*\*\*(.*?)\*\*\s*\]\([^)]*\)/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/\*\*/g, "")
+      .replace(/`/g, "")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&#xA0;/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
 
+  // Shop is taken ONLY from the Ship To block, never from arbitrary text.
   function extractShop(text) {
-    // Zoho markdown normally looks like:
-    // | Ship To<br>[**JAIN TRADING COMPANY**](...) |
-    let m = text.match(/Ship\s*To\s*(?:<br\s*\/?\s*>|\n|\r\n|\s)*\[\s*\*\*\s*([^*\]\n]+?)\s*\*\*\s*\]/i);
+    const ship = text.match(/Ship\s*To([\s\S]*?)(?=\n\s*\|\s*-{3,}|\n\s*\|\s*Sales\s+Order|\n\s*Sales\s+Order|$)/i);
+    if (!ship) return "";
+
+    const block = ship[1];
+    let m = block.match(/\[\s*\*\*\s*([^*\]\r\n]+?)\s*\*\*\s*\]/i);
     if (m) return stripMd(m[1]);
 
-    // Also accept a plain-text Ship To line, but only the immediate next line.
-    m = text.match(/Ship\s*To\s*(?:<br\s*\/?\s*>|\n)+\s*([^\n|]+)/i);
-    return m ? stripMd(m[1]) : "";
+    // Fallback only inside Ship To block: first meaningful line after Ship To.
+    const lines = block.replace(/<br\s*\/?\s*>/gi, "\n").split(/\n+/)
+      .map(x => stripMd(x)).filter(Boolean);
+    return lines[0] || "";
   }
 
   function extractInvoice(text) {
-    const m = text.match(/Sales\s*Order\s*#?\s*:\s*\|?\s*(SO-MH\s*\/\s*\d{2}-\d{2}\s*\/\s*\d+)\s*(?:\||\n|$)/i);
+    // Read ONLY the explicit Sales Order# field.
+    const m = text.match(/Sales\s*Order\s*#?\s*:\s*\|?\s*(SO-MH\s*\/\s*\d{2}-\d{2}\s*\/\s*\d+)\s*(?=\||\n|$)/i);
     return m ? m[1].replace(/\s+/g, " ").trim() : "";
   }
 
@@ -60,93 +71,97 @@
     return m ? m[1] : "";
   }
 
-  // ---------------- STRICT ITEM / SERIAL EXTRACTION ----------------
-
   function validSerial(serial) {
-    // Zoho serials in this workflow are alphanumeric codes.
-    // Spaces, punctuation-only values and prose are rejected.
-    return /^[A-Za-z0-9][A-Za-z0-9._-]{5,79}$/.test(serial);
+    // Serial must be a single alphanumeric/hyphen/dot/underscore token.
+    // Minimum length prevents ordinary words such as "Pcs" from being accepted.
+    return /^[A-Za-z0-9][A-Za-z0-9._-]{7,79}$/.test(serial);
   }
 
   function extractSerialList(serialText) {
-    return String(serialText || "")
+    const cleaned = String(serialText || "")
       .replace(/<br\s*\/?\s*>/gi, " ")
-      .replace(/\*+/g, "")
-      .split(/[\s,;]+/)
-      .map(x => x.trim())
-      .filter(Boolean)
-      .filter(validSerial);
+      .replace(/\*+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!cleaned) return [];
+
+    // Zoho normally separates serials with commas. Newline/space is accepted
+    // only because browser paste can alter whitespace; invalid tokens are NOT silently dropped.
+    const tokens = cleaned.split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
+    if (!tokens.length || tokens.some(x => !validSerial(x))) return [];
+    return tokens;
   }
 
   function productFromCell(cell) {
-    // Everything before Serial Number(s) is the product section.
     const before = String(cell).split(/Serial\s*Number\(s\)\s*:/i)[0];
-    // The product name is the first non-empty text before the serial marker.
     const lines = before
       .replace(/<br\s*\/?\s*>/gi, "\n")
       .split(/\n+/)
       .map(x => stripMd(x))
       .filter(Boolean);
-    return lines.length ? lines[0] : "";
+
+    // The first meaningful line is the actual item name. HSN/Qty are outside this cell.
+    return lines[0] || "";
   }
 
   function parseItemRow(row) {
-    // A valid Zoho shipment row has exactly this structural ending:
-    // | HSN | QTY | Pcs |
-    const end = row.match(/\|\s*(\d{4,12})\s*\|\s*(\d+(?:\.\d+)?)\s*\|\s*(?:pcs?|pieces?)\s*\|\s*$/i);
-    if (!end) return null;
+    // IMPORTANT: This is the exact Zoho markdown structure:
+    // | item no | ITEM + Serial Number(s): ... | HSN | Qty | Pcs |
+    const m = String(row).match(/^\s*\|\s*(\d+)\s*\|\s*([\s\S]*?)\s*\|\s*(\d{4,12})\s*\|\s*(\d+)\s*\|\s*(?:pcs?|pieces?)\s*\|\s*$/i);
+    if (!m) return null;
 
-    const qty = Number(end[2]);
-    const beforeEnd = row.slice(0, end.index);
-
-    // Find the numbered first cell of this same row.
-    const start = beforeEnd.match(/^\s*\|\s*(\d+)\s*\|\s*([\s\S]*)$/);
-    if (!start) return null;
-
-    const cell = start[2];
-    const serialMarker = /Serial\s*Number\(s\)\s*:/i.exec(cell);
-    if (!serialMarker) return null;
+    const itemNo = Number(m[1]);
+    const cell = m[2];
+    const qty = Number(m[4]);
+    const marker = /Serial\s*Number\(s\)\s*:/i.exec(cell);
+    if (!marker || !Number.isInteger(itemNo) || itemNo < 1 || !Number.isInteger(qty) || qty < 1) return null;
 
     const product = productFromCell(cell);
-    const serialText = cell.slice(serialMarker.index + serialMarker[0].length);
+    const serialText = cell.slice(marker.index + marker[0].length);
     const serials = extractSerialList(serialText);
 
-    if (!product || !Number.isInteger(qty) || qty < 1 || !serials.length) return null;
-    return { product, serials, qty };
+    // Never return a partial extraction.
+    if (!product || serials.length !== qty) return null;
+    return { itemNo, product, serials, qty };
   }
 
   function extractItems(text) {
     const items = [];
 
-    // PRIMARY: parse each physical markdown table line.
-    // This is the exact format produced by the pasted Zoho Shipment Order.
-    const lines = text.split("\n");
-    for (const line of lines) {
-      if (!/^\s*\|\s*\d+\s*\|/.test(line)) continue;
-      if (!/Serial\s*Number\(s\)\s*:/i.test(line)) continue;
-      const item = parseItemRow(line);
+    // Parse across the complete pasted text, not line-by-line only.
+    // This survives browser/textarea wrapping and Zoho's very long table rows.
+    const rowRe = /(?:^|\n)\s*\|\s*(\d+)\s*\|\s*([\s\S]*?)\s*\|\s*(\d{4,12})\s*\|\s*(\d+)\s*\|\s*(?:pcs?|pieces?)\s*\|\s*(?=\n|$)/gi;
+    let m;
+    while ((m = rowRe.exec(text))) {
+      const row = m[0].replace(/^\s*\n?/, "").trim();
+      const item = parseItemRow(row);
       if (item) items.push(item);
     }
 
-    // SECONDARY: if the browser wrapped a table row into multiple lines,
-    // reconstruct blocks beginning with | number | and ending with | HSN | qty | Pcs |.
-    if (!items.length) {
-      const blockRe = /(?:^|\n)\s*\|\s*\d+\s*\|[\s\S]*?\|\s*\d{4,12}\s*\|\s*\d+(?:\.\d+)?\s*\|\s*(?:pcs?|pieces?)\s*\|\s*(?=\n|$)/gi;
-      let m;
-      while ((m = blockRe.exec(text))) {
-        const item = parseItemRow(m[0].trim());
-        if (item) items.push(item);
+    // Require a clean sequential table: 1,2,3,... with no skipped rows.
+    items.sort((a, b) => a.itemNo - b.itemNo);
+    const clean = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].itemNo !== i + 1) return [];
+      clean.push(items[i]);
+    }
+
+    // No duplicate item names and no duplicate serials.
+    const products = new Set();
+    const serials = new Set();
+    for (const item of clean) {
+      const pk = item.product.toUpperCase();
+      if (products.has(pk)) return [];
+      products.add(pk);
+      for (const serial of item.serials) {
+        const sk = serial.toUpperCase();
+        if (serials.has(sk)) return [];
+        serials.add(sk);
       }
     }
 
-    // Remove exact duplicate rows without ever merging different items.
-    const seen = new Set();
-    return items.filter(item => {
-      const key = item.product.toUpperCase() + "\u0000" + item.serials.join("\u0001").toUpperCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+    return clean;
   }
 
   function validateParsedData(data) {
