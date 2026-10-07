@@ -330,6 +330,12 @@ td{color:#222!important;border-color:#eee7c9!important}
                     </svg>
                     <span>Warehouse Audit</span>
                 </a>
+                <a href="javascript:void(0);" class="nav-link" id="navWarehouseExpenses">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 8c-2.21 0-4 1.12-4 2.5S9.79 13 12 13s4 1.12 4 2.5S14.21 18 12 18m0-10V6m0 12v-2m8-4a8 8 0 11-16 0 8 8 0 0116 0z" />
+                    </svg>
+                    <span>Warehouse Expenses</span>
+                </a>
             </nav>
 
             <div class="sidebar-footer" style="display: flex; flex-direction: column; gap: 10px; width: 100%; padding: 16px; border-top: 1px solid var(--border-color); box-sizing: border-box;">
@@ -1352,15 +1358,6 @@ td{color:#222!important;border-color:#eee7c9!important}
 
         <section class="content-section" id="sectionWarehouseAudit" style="display:none; padding:0; box-sizing:border-box; height:100%; width:100%; overflow-y:auto; overflow-x:hidden;">
             <div style="display:flex;flex-direction:column;width:100%;min-height:100%;align-items:stretch;">
-                <!-- Separate module tabs: Audit and Expenses -->
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;background:var(--bg-card);border-bottom:1px solid var(--border-color);position:sticky;top:0;z-index:30;">
-                    <h2 style="margin:0;font-size:1.2rem;font-weight:800;">Warehouse Audit</h2>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                        <button type="button" id="btnWarehouseAuditPage" class="btn-primary" style="padding:9px 20px;font-weight:800;">📋 Audit</button>
-                        <button type="button" id="btnWarehouseExpensesPage" class="btn-secondary" style="padding:9px 20px;font-weight:800;">💰 Expenses</button>
-                    </div>
-                </div>
-
                 <!-- AUDIT: one complete page -->
                 <div id="warehouseAuditPage" style="display:block;width:100%;padding:18px;box-sizing:border-box;min-height:calc(100vh - 90px);">
                     <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,360px);gap:18px;align-items:start;width:100%;">
@@ -1388,6 +1385,11 @@ td{color:#222!important;border-color:#eee7c9!important}
                     </div>
                 </div>
 
+            </div>
+        </section>
+
+        <section class="content-section" id="sectionWarehouseExpenses" style="display:none; padding:0; box-sizing:border-box; height:100%; width:100%; overflow-y:auto; overflow-x:hidden;">
+            <div style="display:flex;flex-direction:column;width:100%;min-height:100%;align-items:stretch;">
                 <!-- EXPENSES: separate complete page -->
                 <div id="warehouseExpensesPage" style="display:none;width:100%;padding:18px;box-sizing:border-box;min-height:calc(100vh - 90px);">
                     <div class="dashboard-card" style="padding:20px;width:100%;box-sizing:border-box;min-height:calc(100vh - 150px);">

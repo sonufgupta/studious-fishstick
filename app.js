@@ -459,8 +459,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             if (targetSectionId === 'sectionWarehouseAudit') {
-                // Warehouse Audit is a single-work-area module. Audit is always the default page.
+                // Warehouse Audit is a dedicated top-level module. Audit is always the default page.
                 showWarehouseAuditPage('audit');
+            } else if (targetSectionId === 'sectionWarehouseExpenses') {
+                // Warehouse Expenses is a dedicated top-level module. Audit is not shown here.
+                showWarehouseAuditPage('expenses');
             } else if (targetSectionId === 'sectionInventory' || targetSectionId === 'sectionOverview') {
                 renderInventoryPanel();
             } else if (targetSectionId === 'sectionMisReport') {
@@ -10147,9 +10150,25 @@ document.addEventListener('DOMContentLoaded', () => {
         await ref.set(warehouseAuditCurrent);
     }
 
+    function renderAuditError(message){
+        const root=$('auditItemsList');
+        if(!root) return;
+        root.innerHTML='<div style="padding:14px 16px;border:1px solid #fca5a5;background:#fff1f2;color:#991b1b;border-radius:12px;font-weight:800;">⚠ Warehouse Audit Error: '+escapeAuditText(message||'Audit data load failed.')+'</div>';
+        const doneBtn=$('btnAuditDone'); if(doneBtn) doneBtn.disabled=true;
+    }
+
     async function renderWarehouseAudit(){
-        await ensureWarehouseAudit();
-        renderAuditItems(); renderAuditHistory();
+        try{
+            if(!isFirebaseConnected || !db){
+                renderAuditError('Firebase connection is not available. Please check Firebase configuration/Rules.');
+                return;
+            }
+            await ensureWarehouseAudit();
+            renderAuditItems(); renderAuditHistory();
+        }catch(err){
+            console.error('Warehouse Audit load error:',err);
+            renderAuditError(err?.message||String(err));
+        }
     }
 
     function showWarehouseAuditPage(mode){
@@ -10177,8 +10196,7 @@ document.addEventListener('DOMContentLoaded', () => {
         $('btnSweeperBackExpenses')?.addEventListener('click',()=>showWarehouseAuditPage('expenses'));
         $('btnSweeperCreateName')?.addEventListener('click',createSweeper);
         $('btnSweeperExcel')?.addEventListener('click',exportSweeperExcel);
-        $('navWarehouseAudit')?.addEventListener('click',()=>showWarehouseAuditPage('audit'));
-        // Audit is the default page whenever Warehouse Audit is opened.
+        // Default inner state: Audit page. Outer section is controlled by the sidebar navigation.
         showWarehouseAuditPage('audit');
     }
     if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',initUI); else initUI();
