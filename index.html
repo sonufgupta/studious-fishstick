@@ -1354,18 +1354,15 @@ td{color:#222!important;border-color:#eee7c9!important}
             <div style="display:flex;flex-direction:column;width:100%;min-height:100%;align-items:stretch;">
                 <!-- Separate module tabs: Audit and Expenses -->
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;background:var(--bg-card);border-bottom:1px solid var(--border-color);position:sticky;top:0;z-index:30;">
-                    <div>
-                        <h2 style="margin:0;font-size:1.2rem;font-weight:800;">Warehouse Activity</h2>
-                        <div style="margin-top:3px;color:var(--text-muted);font-size:.8rem;">Audit aur Expenses alag-alag full-page activities hain.</div>
-                    </div>
+                    <h2 style="margin:0;font-size:1.2rem;font-weight:800;">Warehouse Audit</h2>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                        <button type="button" id="btnWarehouseAuditPage" class="btn-primary" style="padding:9px 18px;font-weight:800;">📋 Audit</button>
-                        <button type="button" id="btnWarehouseExpensesPage" class="btn-secondary" style="padding:9px 18px;font-weight:800;">💰 Expenses</button>
+                        <button type="button" id="btnWarehouseAuditPage" class="btn-primary" style="padding:9px 20px;font-weight:800;">📋 Audit</button>
+                        <button type="button" id="btnWarehouseExpensesPage" class="btn-secondary" style="padding:9px 20px;font-weight:800;">💰 Expenses</button>
                     </div>
                 </div>
 
                 <!-- AUDIT: one complete page -->
-                <div id="warehouseAuditPage" style="display:block;width:100%;padding:18px;box-sizing:border-box;">
+                <div id="warehouseAuditPage" style="display:block;width:100%;padding:18px;box-sizing:border-box;min-height:calc(100vh - 90px);">
                     <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,360px);gap:18px;align-items:start;width:100%;">
                         <div class="dashboard-card" style="padding:20px;min-width:0;">
                             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
@@ -1392,7 +1389,7 @@ td{color:#222!important;border-color:#eee7c9!important}
                 </div>
 
                 <!-- EXPENSES: separate complete page -->
-                <div id="warehouseExpensesPage" style="display:none;width:100%;padding:18px;box-sizing:border-box;">
+                <div id="warehouseExpensesPage" style="display:none;width:100%;padding:18px;box-sizing:border-box;min-height:calc(100vh - 90px);">
                     <div class="dashboard-card" style="padding:20px;width:100%;box-sizing:border-box;min-height:calc(100vh - 150px);">
                         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:20px;">
                             <div>
