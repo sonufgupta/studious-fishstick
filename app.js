@@ -1,4 +1,4 @@
-﻿/**
+/**
 
 });
         // 0. Sync Reset Timestamp - Safe Realtime in-memory check (no infinite reload)
@@ -137,6 +137,8 @@ document.addEventListener('DOMContentLoaded', () => {
             firebase.initializeApp(firebaseConfig);
             db = firebase.database();
             isFirebaseConnected = true;
+            window.db = db;
+            window.isFirebaseConnected = isFirebaseConnected;
             console.log("Firebase Realtime Database initialized successfully!");
         } catch (err) {
             console.error("Firebase initialization failed. Falling back to local storage.", err);
@@ -460,10 +462,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (targetSectionId === 'sectionWarehouseAudit') {
                 // Warehouse Audit is a dedicated top-level module. Audit is always the default page.
-                showWarehouseAuditPage('audit');
+                window.showWarehouseAuditPage('audit');
             } else if (targetSectionId === 'sectionWarehouseExpenses') {
                 // Warehouse Expenses is a dedicated top-level module. Audit is not shown here.
-                showWarehouseAuditPage('expenses');
+                window.showWarehouseAuditPage('expenses');
             } else if (targetSectionId === 'sectionInventory' || targetSectionId === 'sectionOverview') {
                 renderInventoryPanel();
             } else if (targetSectionId === 'sectionMisReport') {
@@ -9814,8 +9816,8 @@ document.addEventListener('DOMContentLoaded', () => {
     let sweeperStorage = null;
 
     function waDbRef(path){
-        if (!window.db || !isFirebaseConnected) return null;
-        return db.ref('wms_data/' + path);
+        if (!window.db || !window.isFirebaseConnected) return null;
+        return window.db.ref('wms_data/' + path);
     }
 
     function pad2(n){ return String(n).padStart(2,'0'); }
@@ -10159,7 +10161,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function renderWarehouseAudit(){
         try{
-            if(!isFirebaseConnected || !db){
+            if(!window.isFirebaseConnected || !window.db){
                 renderAuditError('Firebase connection is not available. Please check Firebase configuration/Rules.');
                 return;
             }
@@ -10187,6 +10189,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if(mode==='expenses'){ /* Expenses landing page only. */ }
         if(mode==='sweeper'){ loadSweeperProfile(); listenSweeperAttendance(); }
     }
+
+    // Expose the page switcher because the main sidebar navigation is initialized
+    // in a separate DOMContentLoaded scope earlier in this file.
+    window.showWarehouseAuditPage = showWarehouseAuditPage;
 
     function initUI(){
         $('btnWarehouseAuditPage')?.addEventListener('click',()=>showWarehouseAuditPage('audit'));
