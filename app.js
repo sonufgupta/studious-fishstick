@@ -353,6 +353,15 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
+        // 7.8. Sync Warehouse Audit History
+        db.ref('wms_data/audit_history').on('value', (snapshot) => {
+            const val = snapshot.val();
+            const history = Array.isArray(val) ? val : (val ? Object.values(val) : []);
+            localStorage.setItem('wms_audit_history', JSON.stringify(history));
+            window.warehouseAuditHistory = history;
+            if (typeof renderWarehouseAuditHistory === 'function') renderWarehouseAuditHistory();
+        });
+
         // 8. Sync Deleted Serials (Trash Bin)
         db.ref('wms_data/deleted_serials').on('value', (snapshot) => {
             const val = snapshot.val();
@@ -464,6 +473,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 populateMisProductsDropdown();
             } else if (targetSectionId === 'sectionInbound') {
                 renderHistoryTable();
+            } else if (targetSectionId === 'sectionWarehouseAudit') {
+                openWarehouseAuditPage();
             } else if (targetSectionId === 'sectionOutbound') {
                 renderOutboundHistoryTable();
             }
@@ -6077,6 +6088,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
+        // Expose a lightweight active-stock snapshot for Warehouse Audit.
+        window.warehouseAuditStock = Object.values(productStock)
+            .filter(item => item && Number(item.serialsCount) > 0)
+            .map(item => ({ name: item.name, qty: Number(item.serialsCount) || 0 }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+
         // Render Detailed Stock Register Table Body based on available stock
         if (registerBody) {
             // Sort to place Out of Stock items at the top
@@ -9322,6 +9339,166 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // --- Warehouse Audit ---
+    window.warehouseAuditHistory = window.warehouseAuditHistory || [];
+    window.warehouseAuditSession = window.warehouseAuditSession || {};
+
+    function getWarehouseAuditHistory() {
+        const saved = localStorage.getItem('wms_audit_history');
+        if (saved) {
+            try { return JSON.parse(saved) || []; } catch (e) {}
+        }
+        return Array.isArray(window.warehouseAuditHistory) ? window.warehouseAuditHistory : [];
+    }
+
+    function saveWarehouseAuditHistory(history) {
+        window.warehouseAuditHistory = history;
+        localStorage.setItem('wms_audit_history', JSON.stringify(history));
+        firebaseSet('audit_history', history);
+    }
+
+    function renderWarehouseAuditHistory() {
+        const box = document.getElementById('warehouseAuditHistoryBox');
+        const count = document.getElementById('warehouseAuditHistoryCount');
+        if (!box) return;
+        const history = getWarehouseAuditHistory().slice().reverse();
+        if (count) count.textContent = `${history.length} record${history.length === 1 ? '' : 's'}`;
+        if (!history.length) {
+            box.innerHTML = '<div style="padding:25px;text-align:center;color:var(--text-muted);">No audit history.</div>';
+            return;
+        }
+        box.innerHTML = history.map(r => {
+            const bad = Number(r.missingPcCount || 0) > 0;
+            const remark = r.remarks || (bad ? `${r.missingPcCount} PC missing` : 'All stock matched');
+            return `<div class="warehouse-audit-history-card ${bad ? 'has-missing' : ''}">
+                <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;">
+                    <strong style="font-size:.82rem;color:${bad ? 'var(--accent-rose)' : 'var(--text-primary)'};">${bad ? '⚠ AUDIT ALERT' : '✓ AUDIT COMPLETED'}</strong>
+                    <span style="font-size:.7rem;color:var(--text-muted);">${r.dateTime || ''}</span>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;font-size:.75rem;">
+                    <div><span style="color:var(--text-muted);">Audit Items</span><br><b>${Number(r.totalAuditItems || 0)}</b></div>
+                    <div><span style="color:var(--text-muted);">PC Count</span><br><b>${Number(r.totalPcCount || 0)}</b></div>
+                    <div><span style="color:var(--text-muted);">Counted</span><br><b>${Number(r.countedPcCount || 0)}</b></div>
+                    <div><span style="color:var(--text-muted);">Missing</span><br><b style="color:${bad ? 'var(--accent-rose)' : 'var(--accent-emerald)'};">${Number(r.missingPcCount || 0)}</b></div>
+                </div>
+                <div style="margin-top:9px;padding-top:8px;border-top:1px solid var(--border-color);font-size:.75rem;color:${bad ? 'var(--accent-rose)' : 'var(--text-secondary)'};"><b>Remarks:</b> ${remark}</div>
+            </div>`;
+        }).join('');
+    }
+
+    function getAuditActiveItems() {
+        // Refresh the same inventory calculation used by the existing Inventory page.
+        renderInventoryPanel();
+        return Array.isArray(window.warehouseAuditStock) ? window.warehouseAuditStock : [];
+    }
+
+    function updateWarehouseAuditProgress() {
+        const items = getAuditActiveItems();
+        const session = window.warehouseAuditSession || {};
+        const audited = items.filter(item => session[item.name] && session[item.name].status).length;
+        const progress = document.getElementById('warehouseAuditProgress');
+        const doneBtn = document.getElementById('btnWarehouseAuditDone');
+        if (progress) progress.textContent = `${audited} / ${items.length} audited`;
+        if (doneBtn) {
+            const ready = items.length > 0 && audited === items.length;
+            doneBtn.disabled = !ready;
+            doneBtn.style.opacity = ready ? '1' : '.55';
+            doneBtn.style.cursor = ready ? 'pointer' : 'not-allowed';
+        }
+    }
+
+    function renderWarehouseAuditItems() {
+        const box = document.getElementById('warehouseAuditItemsBox');
+        if (!box) return;
+        const items = getAuditActiveItems();
+        const session = window.warehouseAuditSession || {};
+        if (!items.length) {
+            box.innerHTML = '<div style="padding:25px;text-align:center;color:var(--text-muted);">No active stock available for audit.</div>';
+            updateWarehouseAuditProgress();
+            return;
+        }
+        box.innerHTML = items.map(item => {
+            const state = session[item.name] || {};
+            const status = state.status || '';
+            const missing = Number(state.missing || 0);
+            const statusText = status === 'ok' ? '<span style="color:var(--accent-emerald);font-weight:800;font-size:.7rem;">✓ MATCHED</span>' : status === 'missing' ? `<span style="color:var(--accent-rose);font-weight:800;font-size:.7rem;">⚠ MISSING ${missing}</span>` : '<span style="color:var(--text-muted);font-size:.7rem;">Pending</span>';
+            return `<div class="warehouse-audit-row">
+                <div style="min-width:0;"><div style="font-size:.78rem;font-weight:800;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${item.name}">${item.name}</div><div style="font-size:.68rem;color:var(--text-muted);margin-top:2px;">System Qty: <b>${item.qty}</b> ${statusText}</div></div>
+                <div style="text-align:right;font-size:.78rem;font-weight:800;color:var(--text-secondary);">${item.qty} PC</div>
+                <div class="warehouse-audit-actions">
+                    <button type="button" class="warehouse-audit-btn ok ${status === 'ok' ? 'active' : ''}" data-audit-action="ok" data-audit-item="${encodeURIComponent(item.name)}">OK</button>
+                    <button type="button" class="warehouse-audit-btn missing ${status === 'missing' ? 'active' : ''}" data-audit-action="missing" data-audit-item="${encodeURIComponent(item.name)}">Missing</button>
+                </div>
+            </div>`;
+        }).join('');
+        updateWarehouseAuditProgress();
+    }
+
+    function openWarehouseAuditPage() {
+        renderWarehouseAuditItems();
+        renderWarehouseAuditHistory();
+    }
+
+    const warehouseAuditItemsBox = document.getElementById('warehouseAuditItemsBox');
+    if (warehouseAuditItemsBox) {
+        warehouseAuditItemsBox.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-audit-action]');
+            if (!btn) return;
+            const itemName = decodeURIComponent(btn.getAttribute('data-audit-item') || '');
+            const action = btn.getAttribute('data-audit-action');
+            const item = getAuditActiveItems().find(x => x.name === itemName);
+            if (!item) return;
+            if (action === 'ok') {
+                window.warehouseAuditSession[itemName] = { status: 'ok', missing: 0, counted: item.qty };
+            } else {
+                const raw = prompt(`Enter missing PC quantity for:\n${itemName}\nSystem Qty: ${item.qty}`);
+                if (raw === null) return;
+                const missing = parseInt(raw, 10);
+                if (!Number.isInteger(missing) || missing <= 0 || missing > item.qty) {
+                    alert(`Please enter a valid missing quantity between 1 and ${item.qty}.`);
+                    return;
+                }
+                window.warehouseAuditSession[itemName] = { status: 'missing', missing, counted: item.qty - missing };
+            }
+            renderWarehouseAuditItems();
+        });
+    }
+
+    const btnWarehouseAuditDone = document.getElementById('btnWarehouseAuditDone');
+    if (btnWarehouseAuditDone) {
+        btnWarehouseAuditDone.addEventListener('click', () => {
+            const items = getAuditActiveItems();
+            const session = window.warehouseAuditSession || {};
+            if (!items.length || items.some(item => !session[item.name] || !session[item.name].status)) {
+                alert('Please complete the audit for every active item first.');
+                return;
+            }
+            const missingPcCount = items.reduce((sum, item) => sum + Number(session[item.name].missing || 0), 0);
+            const totalPcCount = items.reduce((sum, item) => sum + Number(item.qty || 0), 0);
+            const countedPcCount = items.reduce((sum, item) => sum + Number(session[item.name].counted ?? item.qty), 0);
+            const now = new Date();
+            const record = {
+                id: `AUD-${Date.now()}`,
+                timestamp: Date.now(),
+                dateTime: now.toLocaleString(),
+                totalAuditItems: items.length,
+                totalPcCount,
+                countedPcCount,
+                missingPcCount,
+                hasMissing: missingPcCount > 0,
+                remarks: missingPcCount > 0 ? `${missingPcCount} PC missing` : 'All active items counted and matched',
+                items: items.map(item => ({ name: item.name, systemQty: item.qty, status: session[item.name].status, missing: Number(session[item.name].missing || 0), counted: Number(session[item.name].counted ?? item.qty) }))
+            };
+            const history = getWarehouseAuditHistory();
+            history.push(record);
+            saveWarehouseAuditHistory(history);
+            window.warehouseAuditSession = {};
+            renderWarehouseAuditItems();
+            renderWarehouseAuditHistory();
+            alert(missingPcCount > 0 ? `Audit saved. ${missingPcCount} PC missing.` : 'Audit completed and saved successfully.');
+        });
+    }
+
     // Remove any leftover festival themes
     document.documentElement.removeAttribute('data-festival');
     localStorage.removeItem('wms_festival_theme');
@@ -9346,6 +9523,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderDamageUI();
     renderOdaUI();
     renderInventoryPanel();
+    renderWarehouseAuditHistory();
     renderDeletedSerialsPanel();
     populateMisProductsDropdown();
     renderOrderQueueUI();

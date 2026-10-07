@@ -318,6 +318,12 @@ td{color:#222!important;border-color:#eee7c9!important}
                     </svg>
                     <span>Damage Register</span>
                 </a>
+                <a href="javascript:void(0);" class="nav-link" id="navWarehouseAudit">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2m-4 4v8m-3-3h6" />
+                    </svg>
+                    <span>Warehouse Audit</span>
+                </a>
                 <a href="javascript:void(0);" class="nav-link" id="navOda">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
@@ -1209,6 +1215,54 @@ td{color:#222!important;border-color:#eee7c9!important}
                         </div>
 
                     </div>
+                </section>
+
+                <!-- WAREHOUSE AUDIT SECTION -->
+                <section class="content-section" id="sectionWarehouseAudit" style="display: none; padding: 24px; box-sizing: border-box; height: 100%; overflow-y: auto;">
+                    <div style="display: flex; flex-direction: column; gap: 20px; width: 100%;">
+                        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap;">
+                            <div>
+                                <h2 style="margin:0; font-size:1.35rem; font-weight:800; color:var(--text-primary);">Warehouse Audit</h2>
+                                <p style="margin:6px 0 0; color:var(--text-secondary); font-size:.85rem;">Count all active stock items and complete the audit.</p>
+                            </div>
+                            <button type="button" id="btnWarehouseAuditDone" class="btn-primary" disabled style="padding:10px 18px; border-radius:var(--radius-sm); font-weight:800; cursor:not-allowed; opacity:.55;">Audit Done</button>
+                        </div>
+
+                        <div style="display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); gap:20px; align-items:start;">
+                            <div class="dashboard-card" style="padding:18px; min-width:0;">
+                                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; border-bottom:1px solid var(--border-color); padding-bottom:12px; margin-bottom:10px;">
+                                    <h3 style="margin:0; font-size:1rem; font-weight:800; color:var(--accent-blue);">Active Items</h3>
+                                    <span id="warehouseAuditProgress" style="font-size:.78rem; font-weight:800; color:var(--text-secondary);">0 / 0 audited</span>
+                                </div>
+                                <div id="warehouseAuditItemsBox" style="display:flex; flex-direction:column; gap:8px;">
+                                    <div style="padding:25px; text-align:center; color:var(--text-muted);">Loading active stock...</div>
+                                </div>
+                            </div>
+
+                            <div class="dashboard-card" style="padding:18px; min-width:0;">
+                                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; border-bottom:1px solid var(--border-color); padding-bottom:12px; margin-bottom:10px;">
+                                    <h3 style="margin:0; font-size:1rem; font-weight:800; color:var(--accent-blue);">Audit History</h3>
+                                    <span id="warehouseAuditHistoryCount" style="font-size:.78rem; font-weight:800; color:var(--text-secondary);">0 records</span>
+                                </div>
+                                <div id="warehouseAuditHistoryBox" style="display:flex; flex-direction:column; gap:10px;">
+                                    <div style="padding:25px; text-align:center; color:var(--text-muted);">No audit history.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <style>
+                        @media (max-width: 900px) {
+                            #sectionWarehouseAudit > div > div:nth-child(2) { grid-template-columns: 1fr !important; }
+                        }
+                        .warehouse-audit-row { display:grid; grid-template-columns:minmax(0,1fr) 90px auto; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid rgba(255,255,255,.06); }
+                        .warehouse-audit-actions { display:flex; gap:6px; justify-content:flex-end; flex-wrap:wrap; }
+                        .warehouse-audit-btn { border:1px solid var(--border-color); border-radius:7px; padding:6px 10px; font-size:.72rem; font-weight:800; cursor:pointer; background:transparent; color:var(--text-secondary); }
+                        .warehouse-audit-btn.ok { color:var(--accent-emerald); border-color:rgba(16,185,129,.3); background:rgba(16,185,129,.07); }
+                        .warehouse-audit-btn.missing { color:var(--accent-rose); border-color:rgba(244,63,94,.3); background:rgba(244,63,94,.07); }
+                        .warehouse-audit-btn.active { box-shadow:0 0 0 2px rgba(59,130,246,.18); }
+                        .warehouse-audit-history-card { border:1px solid var(--border-color); border-radius:10px; padding:12px; background:rgba(255,255,255,.015); }
+                        .warehouse-audit-history-card.has-missing { border-color:rgba(244,63,94,.45); background:rgba(244,63,94,.055); }
+                    </style>
                 </section>
 
                 <!-- 7. ODA REGISTER SECTION -->
