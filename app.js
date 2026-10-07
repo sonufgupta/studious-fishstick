@@ -353,15 +353,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        // 7.8. Sync Warehouse Audit History
-        db.ref('wms_data/audit_history').on('value', (snapshot) => {
-            const val = snapshot.val();
-            const history = Array.isArray(val) ? val : (val ? Object.values(val) : []);
-            localStorage.setItem('wms_audit_history', JSON.stringify(history));
-            window.warehouseAuditHistory = history;
-            if (typeof renderWarehouseAuditHistory === 'function') renderWarehouseAuditHistory();
-        });
-
         // 8. Sync Deleted Serials (Trash Bin)
         db.ref('wms_data/deleted_serials').on('value', (snapshot) => {
             const val = snapshot.val();
@@ -473,8 +464,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 populateMisProductsDropdown();
             } else if (targetSectionId === 'sectionInbound') {
                 renderHistoryTable();
-            } else if (targetSectionId === 'sectionWarehouseAudit') {
-                openWarehouseAuditPage();
             } else if (targetSectionId === 'sectionOutbound') {
                 renderOutboundHistoryTable();
             }
@@ -6088,12 +6077,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
-        // Expose a lightweight active-stock snapshot for Warehouse Audit.
-        window.warehouseAuditStock = Object.values(productStock)
-            .filter(item => item && Number(item.serialsCount) > 0)
-            .map(item => ({ name: item.name, qty: Number(item.serialsCount) || 0 }))
-            .sort((a, b) => a.name.localeCompare(b.name));
-
         // Render Detailed Stock Register Table Body based on available stock
         if (registerBody) {
             // Sort to place Out of Stock items at the top
@@ -7677,40 +7660,482 @@ document.addEventListener('DOMContentLoaded', () => {
         updateConnectionStatus(false);
     }
 
-    // --- Simple Password Protection ---
-    const accessLockOverlay = document.getElementById('accessLockOverlay');
-    const accessPasswordInput = document.getElementById('accessPasswordInput');
-    const btnUnlockOverlayWithPass = document.getElementById('btnUnlockOverlayWithPass');
-    const accessOverlayStatus = document.getElementById('accessOverlayStatus');
+    // --- Device Access Authorization Control ---
+    let deviceId = localStorage.getItem('wms_device_id');
+    if (!deviceId) {
+        deviceId = 'DEV-' + Math.floor(1000 + Math.random() * 9000);
+        localStorage.setItem('wms_device_id', deviceId);
+    }
 
-    function unlockWebWithPassword() {
-        const pass = accessPasswordInput ? accessPasswordInput.value : '';
-        if (pass === '1998') {
-            if (accessLockOverlay) accessLockOverlay.style.display = 'none';
-            if (accessPasswordInput) accessPasswordInput.value = '';
-            if (accessOverlayStatus) accessOverlayStatus.textContent = '';
-        } else {
-            if (accessOverlayStatus) {
-                accessOverlayStatus.textContent = 'Incorrect password.';
-                accessOverlayStatus.style.color = 'var(--accent-rose)';
+    const accessLockOverlay = document.getElementById('accessLockOverlay');
+    const accessOverlayDeviceId = document.getElementById('accessOverlayDeviceId');
+    const btnUnlockOverlayWithPass = document.getElementById('btnUnlockOverlayWithPass');
+    
+    if (accessOverlayDeviceId) {
+        accessOverlayDeviceId.textContent = deviceId;
+    }
+
+    // --- Real-time speech synthesis notification helpers ---
+    let localSpeakerActive = localStorage.getItem('wms_speaker_active') === 'true';
+    let baseSpeakerSpeed = parseFloat(localStorage.getItem('wms_speaker_speed')) || 0.95;
+    let wakeLock = null;
+    let silentAudioEl = null;
+    let ttsAudioEl = null;
+
+    async function requestWakeLock() {
+        try {
+            if ('wakeLock' in navigator) {
+                wakeLock = await navigator.wakeLock.request('screen');
+                console.log("Wake Lock acquired successfully.");
             }
-            if (accessPasswordInput) {
-                accessPasswordInput.value = '';
-                accessPasswordInput.focus();
-            }
+        } catch (err) {
+            console.warn(`Wake Lock failed: ${err.name}, ${err.message}`);
         }
     }
 
-    if (btnUnlockOverlayWithPass) btnUnlockOverlayWithPass.addEventListener('click', unlockWebWithPassword);
-    if (accessPasswordInput) {
-        accessPasswordInput.addEventListener('keydown', (event) => {
-            if (event.key === 'Enter') unlockWebWithPassword();
-        });
-        setTimeout(() => accessPasswordInput.focus(), 100);
+    function releaseWakeLock() {
+        if (wakeLock !== null) {
+            wakeLock.release().then(() => {
+                wakeLock = null;
+                console.log("Wake Lock released.");
+            }).catch(err => {
+                console.warn("Wake Lock release failed:", err);
+            });
+        }
     }
 
-    // No device approval/authorization is required. Speaker remains local/browser based.
-    const deviceId = 'LOCAL';
+    function startSilenceLoop() {
+        try {
+            if (!silentAudioEl) {
+                silentAudioEl = document.createElement('audio');
+                silentAudioEl.id = 'silentAudioLoop';
+                // 1-second silent WAV base64 data to keep audio session alive on mobile devices
+                silentAudioEl.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
+                silentAudioEl.loop = true;
+                silentAudioEl.volume = 0.05;
+                document.body.appendChild(silentAudioEl);
+            }
+            silentAudioEl.play().then(() => {
+                console.log("Silent audio loop started successfully.");
+            }).catch(err => {
+                console.warn("Silent audio play failed:", err);
+            });
+        } catch (e) {
+            console.warn("Silent audio loop setup failed: ", e);
+        }
+    }
+
+    function stopSilenceLoop() {
+        if (silentAudioEl) {
+            try {
+                silentAudioEl.pause();
+            } catch(e){}
+            console.log("Silent audio loop stopped.");
+        }
+    }
+
+    // Auto-acquire wake lock if page visibility changes back to visible and speaker is active
+    document.addEventListener('visibilitychange', async () => {
+        if (localSpeakerActive && document.visibilityState === 'visible') {
+            await requestWakeLock();
+        }
+    });
+
+    function triggerSpeak(text) {
+        if (isFirebaseConnected && db) {
+            db.ref('wms_data/speak_event').set({
+                text: text,
+                timestamp: Date.now()
+            });
+        } else {
+            playLocalSpeak(text);
+        }
+    }
+
+    let speechQueue = [];
+    let isSpeaking = false;
+
+    function playLocalSpeak(text) {
+        if (!localSpeakerActive) return;
+        if (isFirebaseConnected && db) {
+            db.ref('wms_data/devices/' + deviceId).once('value').then(snapshot => {
+                const dev = snapshot.val();
+                if (dev && dev.status === 'approved' && dev.speakerApproved) {
+                    speechQueue.push(text);
+                    processSpeechQueue();
+                }
+            });
+        } else {
+            speechQueue.push(text);
+            processSpeechQueue();
+        }
+    }
+
+    function processSpeechQueue() {
+        if (isSpeaking) return;
+        if (speechQueue.length === 0) return;
+
+        isSpeaking = true;
+        let text = speechQueue.shift();
+
+        // Calculate rate dynamically based on the user-configured baseSpeakerSpeed
+        const queueSize = speechQueue.length;
+        let rate = baseSpeakerSpeed;
+        let processedText = text;
+
+        if (queueSize >= 2) {
+            // Turbo Speed: 3+ items back-to-back (current + 2 waiting)
+            rate = Math.min(baseSpeakerSpeed * 1.55, 2.0);
+            processedText = text.replace(/,/g, ' '); // remove commas for speed
+        } else if (queueSize === 1) {
+            // Fast Speed: 2 items back-to-back (current + 1 waiting)
+            rate = Math.min(baseSpeakerSpeed * 1.25, 2.0);
+            processedText = text.replace(/,/g, ' '); // remove commas for speed
+        } else {
+            // Normal user-selected speed
+            rate = baseSpeakerSpeed;
+            processedText = text;
+        }
+
+        executeSpeechQueueItem(processedText, rate);
+    }
+
+    function executeSpeechQueueItem(text, rate) {
+        if (navigator.onLine) {
+            try {
+                if (!ttsAudioEl) {
+                    ttsAudioEl = document.createElement('audio');
+                    ttsAudioEl.id = 'ttsAudioPlayer';
+                    document.body.appendChild(ttsAudioEl);
+                }
+                const url = 'https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=' + encodeURIComponent(text);
+                ttsAudioEl.src = url;
+                ttsAudioEl.playbackRate = rate;
+                ttsAudioEl.volume = 1.0;
+                
+                ttsAudioEl.onended = () => {
+                    isSpeaking = false;
+                    processSpeechQueue();
+                };
+                ttsAudioEl.onerror = () => {
+                    console.warn("TTS audio play failed, trying local fallback.");
+                    localSpeechFallbackQueue(text, rate);
+                };
+
+                ttsAudioEl.play().catch(err => {
+                    console.warn("TTS play failed, trying local fallback:", err);
+                    localSpeechFallbackQueue(text, rate);
+                });
+                return;
+            } catch (e) {
+                console.warn("TTS play exception, trying local fallback:", e);
+            }
+        }
+        localSpeechFallbackQueue(text, rate);
+    }
+
+    function localSpeechFallbackQueue(text, rate) {
+        if (!window.speechSynthesis) {
+            isSpeaking = false;
+            processSpeechQueue();
+            return;
+        }
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'en-US';
+        utterance.rate = rate;
+        utterance.pitch = 1.0;
+        
+        utterance.onend = () => {
+            isSpeaking = false;
+            processSpeechQueue();
+        };
+        utterance.onerror = () => {
+            isSpeaking = false;
+            processSpeechQueue();
+        };
+        window.speechSynthesis.speak(utterance);
+    }
+
+    // Toggle Local Speaker button handler
+    const btnToggleLocalSpeaker = document.getElementById('btnToggleLocalSpeaker');
+    const btnToggleLocalSpeakerText = document.getElementById('btnToggleLocalSpeakerText');
+    const localSpeakerIcon = document.getElementById('localSpeakerIcon');
+    const inputSpeakerSpeed = document.getElementById('inputSpeakerSpeed');
+    const lblSpeakerSpeedVal = document.getElementById('lblSpeakerSpeedVal');
+
+    function updateLocalSpeakerUI() {
+        if (!btnToggleLocalSpeaker || !btnToggleLocalSpeakerText) return;
+        if (localSpeakerActive) {
+            btnToggleLocalSpeaker.style.background = 'rgba(16, 185, 129, 0.12)';
+            btnToggleLocalSpeaker.style.color = 'var(--accent-emerald)';
+            btnToggleLocalSpeaker.style.borderColor = 'var(--accent-emerald)';
+            btnToggleLocalSpeakerText.textContent = 'Speaker Active';
+            if (localSpeakerIcon) {
+                localSpeakerIcon.style.color = 'var(--accent-emerald)';
+            }
+        } else {
+            btnToggleLocalSpeaker.style.background = 'rgba(244, 63, 94, 0.08)';
+            btnToggleLocalSpeaker.style.color = 'var(--accent-rose)';
+            btnToggleLocalSpeaker.style.borderColor = 'rgba(244, 63, 94, 0.2)';
+            btnToggleLocalSpeakerText.textContent = 'Muted (Click to Unmute)';
+            if (localSpeakerIcon) {
+                localSpeakerIcon.style.color = 'var(--accent-rose)';
+            }
+        }
+
+        // Update Speed Control Slider UI value
+        if (inputSpeakerSpeed && lblSpeakerSpeedVal) {
+            inputSpeakerSpeed.value = baseSpeakerSpeed;
+            lblSpeakerSpeedVal.textContent = baseSpeakerSpeed.toFixed(2) + 'x';
+        }
+    }
+
+    if (btnToggleLocalSpeaker) {
+        btnToggleLocalSpeaker.addEventListener('click', () => {
+            localSpeakerActive = !localSpeakerActive;
+            localStorage.setItem('wms_speaker_active', localSpeakerActive ? 'true' : 'false');
+            updateLocalSpeakerUI();
+            if (localSpeakerActive) {
+                startSilenceLoop();
+                playLocalSpeak("Speaker active");
+                requestWakeLock();
+            } else {
+                releaseWakeLock();
+                stopSilenceLoop();
+                speechQueue = [];
+                isSpeaking = false;
+                if (ttsAudioEl) {
+                    try { ttsAudioEl.pause(); } catch(e){}
+                }
+                if (window.speechSynthesis) {
+                    try { window.speechSynthesis.cancel(); } catch(e){}
+                }
+            }
+        });
+    }
+
+    if (inputSpeakerSpeed && lblSpeakerSpeedVal) {
+        inputSpeakerSpeed.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            baseSpeakerSpeed = val;
+            localStorage.setItem('wms_speaker_speed', val.toString());
+            lblSpeakerSpeedVal.textContent = val.toFixed(2) + 'x';
+        });
+    }
+
+    // Try to restore wake lock and silent loop if localSpeakerActive was saved as active
+    // Note: Browser rules require user gesture, so this will activate on the first user interaction on the page.
+    window.addEventListener('click', function initSpeakerOnGesture() {
+        if (localSpeakerActive) {
+            startSilenceLoop();
+            requestWakeLock();
+        }
+        window.removeEventListener('click', initSpeakerOnGesture);
+    });
+
+    updateLocalSpeakerUI();
+
+    // Bind real-time listener for speak events across all authorized speaker devices
+    if (isFirebaseConnected && db) {
+        db.ref('wms_data/speak_event').on('value', (snapshot) => {
+            const val = snapshot.val();
+            if (val && val.text && val.timestamp) {
+                if (Date.now() - val.timestamp < 5000) {
+                    playLocalSpeak(val.text);
+                }
+            }
+        });
+    }
+
+    function checkDeviceApprovalStatus() {
+        if (!isFirebaseConnected || !db) {
+            // Offline fallback: allow access for local testing if offline
+            if (accessLockOverlay) accessLockOverlay.style.display = 'none';
+            return;
+        }
+
+        db.ref('wms_data/devices/' + deviceId).on('value', (snapshot) => {
+            const device = snapshot.val();
+            if (!device) {
+                // Register device as pending approval in Firebase
+                const deviceRecord = {
+                    id: deviceId,
+                    status: 'pending',
+                    requestedAt: new Date().toLocaleString(),
+                    userAgent: navigator.userAgent
+                };
+                db.ref('wms_data/devices/' + deviceId).set(deviceRecord);
+                if (accessLockOverlay) accessLockOverlay.style.display = 'flex';
+            } else {
+                if (device.status === 'approved') {
+                    if (accessLockOverlay) accessLockOverlay.style.display = 'none';
+                } else {
+                    if (accessLockOverlay) accessLockOverlay.style.display = 'flex';
+                    const statusText = document.getElementById('accessOverlayStatus');
+                    if (statusText) {
+                        if (device.status === 'rejected') {
+                            statusText.style.color = 'var(--accent-rose)';
+                            statusText.innerHTML = '<span class="status-dot" style="background-color: var(--accent-rose); box-shadow: 0 0 8px var(--accent-rose); width: 6px; height: 6px;"></span>Access Denied/Rejected';
+                        } else {
+                            statusText.style.color = 'var(--accent-amber)';
+                            statusText.innerHTML = '<span class="status-dot" style="background-color: var(--accent-amber); box-shadow: 0 0 8px var(--accent-amber); width: 6px; height: 6px; animation: pulse 2s infinite;"></span>Waiting for admin approval...';
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    if (btnUnlockOverlayWithPass) {
+        btnUnlockOverlayWithPass.addEventListener('click', () => {
+            const pass = prompt("Enter Administrator Password to authorize this device:");
+            if (pass === '1998') {
+                if (isFirebaseConnected && db) {
+                    db.ref('wms_data/devices/' + deviceId + '/status').set('approved').then(() => {
+                        alert("Device authorized successfully!");
+                    });
+                } else {
+                    alert("Local authorization success (offline mode).");
+                    if (accessLockOverlay) accessLockOverlay.style.display = 'none';
+                }
+            } else if (pass !== null) {
+                alert("Incorrect password!");
+            }
+        });
+    }
+
+    // --- Device Manager Modal Controllers ---
+    const btnOpenDeviceManager = document.getElementById('btnOpenDeviceManager');
+    const deviceManagerModal = document.getElementById('deviceManagerModal');
+    const closeDeviceManagerModalBtn = document.getElementById('closeDeviceManagerModalBtn');
+    const closeDeviceManagerModalFooterBtn = document.getElementById('closeDeviceManagerModalFooterBtn');
+    const deviceManagerTableBody = document.getElementById('deviceManagerTableBody');
+
+    function openDeviceManager() {
+        if (!deviceManagerModal) return;
+        deviceManagerModal.classList.add('active');
+        loadDevicesInManager();
+    }
+
+    function closeDeviceManager() {
+        if (deviceManagerModal) {
+            deviceManagerModal.classList.remove('active');
+        }
+    }
+
+    if (btnOpenDeviceManager) {
+        btnOpenDeviceManager.addEventListener('click', openDeviceManager);
+    }
+    if (closeDeviceManagerModalBtn) {
+        closeDeviceManagerModalBtn.addEventListener('click', closeDeviceManager);
+    }
+    if (closeDeviceManagerModalFooterBtn) {
+        closeDeviceManagerModalFooterBtn.addEventListener('click', closeDeviceManager);
+    }
+
+    const btnClearAllDevicesBtn = document.getElementById('btnClearAllDevicesBtn');
+    if (btnClearAllDevicesBtn) {
+        btnClearAllDevicesBtn.addEventListener('click', () => {
+            const msg = "Are you sure you want to clear all device authorization records?\n\nThis will instantly lock all other devices. If your own device is locked, you can unlock it using the Admin Password '1998'.";
+            if (!confirm(msg)) return;
+            
+            if (isFirebaseConnected && db) {
+                db.ref('wms_data/devices').set(null).then(() => {
+                    alert("All device records cleared successfully.");
+                }).catch(err => {
+                    alert("Failed to clear device records: " + err.message);
+                });
+            } else {
+                alert("Database offline. Cannot clear records.");
+            }
+        });
+    }
+
+    function loadDevicesInManager() {
+        if (!isFirebaseConnected || !db || !deviceManagerTableBody) return;
+        
+        db.ref('wms_data/devices').on('value', (snapshot) => {
+            deviceManagerTableBody.innerHTML = '';
+            const devices = snapshot.val();
+            if (!devices) {
+                deviceManagerTableBody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); font-style: italic; padding: 20px;">No device requests logged.</td></tr>';
+                return;
+            }
+
+            Object.values(devices).forEach(dev => {
+                const tr = document.createElement('tr');
+                tr.style.borderBottom = '1px solid rgba(255, 255, 255, 0.05)';
+                
+                let statusBadge = `<span style="font-size: 0.7rem; font-weight: 700; background: rgba(245, 158, 11, 0.15); color: var(--accent-amber); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(245, 158, 11, 0.2); text-transform: uppercase;">Pending</span>`;
+                if (dev.status === 'approved') {
+                    statusBadge = `<span style="font-size: 0.7rem; font-weight: 700; background: rgba(16, 185, 129, 0.15); color: var(--accent-emerald); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(16, 185, 129, 0.2); text-transform: uppercase;">Approved</span>`;
+                } else if (dev.status === 'rejected') {
+                    statusBadge = `<span style="font-size: 0.7rem; font-weight: 700; background: rgba(244, 63, 94, 0.15); color: var(--accent-rose); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(244, 63, 94, 0.2); text-transform: uppercase;">Rejected</span>`;
+                }
+
+                let speakerToggle = '';
+                if (dev.status === 'approved') {
+                    const isApproved = dev.speakerApproved ? 'checked' : '';
+                    speakerToggle = `
+                        <div style="display: flex; justify-content: center; align-items: center;">
+                            <label style="position: relative; display: inline-block; width: 34px; height: 20px; cursor: pointer;">
+                                <input type="checkbox" ${isApproved} onchange="window.toggleDeviceSpeaker('${dev.id}', this.checked)" style="opacity: 0; width: 0; height: 0; display: none;">
+                                <span style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: ${dev.speakerApproved ? 'var(--accent-emerald)' : 'rgba(255,255,255,0.1)'}; transition: .4s; border-radius: 20px;">
+                                    <span style="position: absolute; content: ''; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; transform: ${dev.speakerApproved ? 'translateX(14px)' : 'none'};"></span>
+                                </span>
+                            </label>
+                        </div>
+                    `;
+                } else {
+                    speakerToggle = `<div style="text-align: center; color: var(--text-muted); font-size: 0.75rem;">N/A</div>`;
+                }
+
+                let actionButton = '';
+                if (dev.status === 'pending') {
+                    actionButton = `
+                        <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                            <button type="button" class="btn-primary" onclick="window.setDeviceStatus('${dev.id}', 'approved')" style="padding: 4px 8px; font-size: 0.7rem; font-weight: 700; cursor: pointer; border-radius: var(--radius-sm);">Approve</button>
+                            <button type="button" class="btn-danger" onclick="window.setDeviceStatus('${dev.id}', 'rejected')" style="padding: 4px 8px; font-size: 0.7rem; font-weight: 700; cursor: pointer; border-radius: var(--radius-sm); background: rgba(244, 63, 94, 0.1); border: 1px solid rgba(244, 63, 94, 0.3); color: var(--accent-rose);">Reject</button>
+                        </div>
+                    `;
+                } else if (dev.status === 'approved') {
+                    actionButton = `
+                        <div style="display: flex; justify-content: flex-end;">
+                            <button type="button" class="btn-danger" onclick="window.setDeviceStatus('${dev.id}', 'rejected')" style="padding: 4px 8px; font-size: 0.7rem; font-weight: 700; cursor: pointer; border-radius: var(--radius-sm); background: rgba(244, 63, 94, 0.1); border: 1px solid rgba(244, 63, 94, 0.3); color: var(--accent-rose);">Revoke</button>
+                        </div>
+                    `;
+                } else {
+                    actionButton = `
+                        <div style="display: flex; justify-content: flex-end;">
+                            <button type="button" class="btn-primary" onclick="window.setDeviceStatus('${dev.id}', 'approved')" style="padding: 4px 8px; font-size: 0.7rem; font-weight: 700; cursor: pointer; border-radius: var(--radius-sm);">Approve</button>
+                        </div>
+                    `;
+                }
+
+                tr.innerHTML = `
+                    <td style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; padding: 12px 8px;">${dev.id}</td>
+                    <td style="font-size: 0.8rem; color: var(--text-secondary); padding: 12px 8px;">${dev.requestedAt || 'N/A'}</td>
+                    <td style="padding: 12px 8px;">${speakerToggle}</td>
+                    <td style="padding: 12px 8px;">${statusBadge}</td>
+                    <td style="padding: 12px 8px;">${actionButton}</td>
+                `;
+                deviceManagerTableBody.appendChild(tr);
+            });
+        });
+    }
+
+    window.setDeviceStatus = function(devId, status) {
+        if (isFirebaseConnected && db) {
+            db.ref('wms_data/devices/' + devId + '/status').set(status);
+        }
+    };
+
+    window.toggleDeviceSpeaker = function(devId, isChecked) {
+        if (isFirebaseConnected && db) {
+            db.ref('wms_data/devices/' + devId + '/speakerApproved').set(isChecked);
+        }
+    };
 
     // --- Outbound First Serials Modal Controllers ---
     const outboundFirstSerialsModal = document.getElementById('outboundFirstSerialsModal');
@@ -9339,166 +9764,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // --- Warehouse Audit ---
-    window.warehouseAuditHistory = window.warehouseAuditHistory || [];
-    window.warehouseAuditSession = window.warehouseAuditSession || {};
-
-    function getWarehouseAuditHistory() {
-        const saved = localStorage.getItem('wms_audit_history');
-        if (saved) {
-            try { return JSON.parse(saved) || []; } catch (e) {}
-        }
-        return Array.isArray(window.warehouseAuditHistory) ? window.warehouseAuditHistory : [];
-    }
-
-    function saveWarehouseAuditHistory(history) {
-        window.warehouseAuditHistory = history;
-        localStorage.setItem('wms_audit_history', JSON.stringify(history));
-        firebaseSet('audit_history', history);
-    }
-
-    function renderWarehouseAuditHistory() {
-        const box = document.getElementById('warehouseAuditHistoryBox');
-        const count = document.getElementById('warehouseAuditHistoryCount');
-        if (!box) return;
-        const history = getWarehouseAuditHistory().slice().reverse();
-        if (count) count.textContent = `${history.length} record${history.length === 1 ? '' : 's'}`;
-        if (!history.length) {
-            box.innerHTML = '<div style="padding:25px;text-align:center;color:var(--text-muted);">No audit history.</div>';
-            return;
-        }
-        box.innerHTML = history.map(r => {
-            const bad = Number(r.missingPcCount || 0) > 0;
-            const remark = r.remarks || (bad ? `${r.missingPcCount} PC missing` : 'All stock matched');
-            return `<div class="warehouse-audit-history-card ${bad ? 'has-missing' : ''}">
-                <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;">
-                    <strong style="font-size:.82rem;color:${bad ? 'var(--accent-rose)' : 'var(--text-primary)'};">${bad ? '⚠ AUDIT ALERT' : '✓ AUDIT COMPLETED'}</strong>
-                    <span style="font-size:.7rem;color:var(--text-muted);">${r.dateTime || ''}</span>
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;font-size:.75rem;">
-                    <div><span style="color:var(--text-muted);">Audit Items</span><br><b>${Number(r.totalAuditItems || 0)}</b></div>
-                    <div><span style="color:var(--text-muted);">PC Count</span><br><b>${Number(r.totalPcCount || 0)}</b></div>
-                    <div><span style="color:var(--text-muted);">Counted</span><br><b>${Number(r.countedPcCount || 0)}</b></div>
-                    <div><span style="color:var(--text-muted);">Missing</span><br><b style="color:${bad ? 'var(--accent-rose)' : 'var(--accent-emerald)'};">${Number(r.missingPcCount || 0)}</b></div>
-                </div>
-                <div style="margin-top:9px;padding-top:8px;border-top:1px solid var(--border-color);font-size:.75rem;color:${bad ? 'var(--accent-rose)' : 'var(--text-secondary)'};"><b>Remarks:</b> ${remark}</div>
-            </div>`;
-        }).join('');
-    }
-
-    function getAuditActiveItems() {
-        // Refresh the same inventory calculation used by the existing Inventory page.
-        renderInventoryPanel();
-        return Array.isArray(window.warehouseAuditStock) ? window.warehouseAuditStock : [];
-    }
-
-    function updateWarehouseAuditProgress() {
-        const items = getAuditActiveItems();
-        const session = window.warehouseAuditSession || {};
-        const audited = items.filter(item => session[item.name] && session[item.name].status).length;
-        const progress = document.getElementById('warehouseAuditProgress');
-        const doneBtn = document.getElementById('btnWarehouseAuditDone');
-        if (progress) progress.textContent = `${audited} / ${items.length} audited`;
-        if (doneBtn) {
-            const ready = items.length > 0 && audited === items.length;
-            doneBtn.disabled = !ready;
-            doneBtn.style.opacity = ready ? '1' : '.55';
-            doneBtn.style.cursor = ready ? 'pointer' : 'not-allowed';
-        }
-    }
-
-    function renderWarehouseAuditItems() {
-        const box = document.getElementById('warehouseAuditItemsBox');
-        if (!box) return;
-        const items = getAuditActiveItems();
-        const session = window.warehouseAuditSession || {};
-        if (!items.length) {
-            box.innerHTML = '<div style="padding:25px;text-align:center;color:var(--text-muted);">No active stock available for audit.</div>';
-            updateWarehouseAuditProgress();
-            return;
-        }
-        box.innerHTML = items.map(item => {
-            const state = session[item.name] || {};
-            const status = state.status || '';
-            const missing = Number(state.missing || 0);
-            const statusText = status === 'ok' ? '<span style="color:var(--accent-emerald);font-weight:800;font-size:.7rem;">✓ MATCHED</span>' : status === 'missing' ? `<span style="color:var(--accent-rose);font-weight:800;font-size:.7rem;">⚠ MISSING ${missing}</span>` : '<span style="color:var(--text-muted);font-size:.7rem;">Pending</span>';
-            return `<div class="warehouse-audit-row">
-                <div style="min-width:0;"><div style="font-size:.78rem;font-weight:800;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${item.name}">${item.name}</div><div style="font-size:.68rem;color:var(--text-muted);margin-top:2px;">System Qty: <b>${item.qty}</b> ${statusText}</div></div>
-                <div style="text-align:right;font-size:.78rem;font-weight:800;color:var(--text-secondary);">${item.qty} PC</div>
-                <div class="warehouse-audit-actions">
-                    <button type="button" class="warehouse-audit-btn ok ${status === 'ok' ? 'active' : ''}" data-audit-action="ok" data-audit-item="${encodeURIComponent(item.name)}">OK</button>
-                    <button type="button" class="warehouse-audit-btn missing ${status === 'missing' ? 'active' : ''}" data-audit-action="missing" data-audit-item="${encodeURIComponent(item.name)}">Missing</button>
-                </div>
-            </div>`;
-        }).join('');
-        updateWarehouseAuditProgress();
-    }
-
-    function openWarehouseAuditPage() {
-        renderWarehouseAuditItems();
-        renderWarehouseAuditHistory();
-    }
-
-    const warehouseAuditItemsBox = document.getElementById('warehouseAuditItemsBox');
-    if (warehouseAuditItemsBox) {
-        warehouseAuditItemsBox.addEventListener('click', (e) => {
-            const btn = e.target.closest('[data-audit-action]');
-            if (!btn) return;
-            const itemName = decodeURIComponent(btn.getAttribute('data-audit-item') || '');
-            const action = btn.getAttribute('data-audit-action');
-            const item = getAuditActiveItems().find(x => x.name === itemName);
-            if (!item) return;
-            if (action === 'ok') {
-                window.warehouseAuditSession[itemName] = { status: 'ok', missing: 0, counted: item.qty };
-            } else {
-                const raw = prompt(`Enter missing PC quantity for:\n${itemName}\nSystem Qty: ${item.qty}`);
-                if (raw === null) return;
-                const missing = parseInt(raw, 10);
-                if (!Number.isInteger(missing) || missing <= 0 || missing > item.qty) {
-                    alert(`Please enter a valid missing quantity between 1 and ${item.qty}.`);
-                    return;
-                }
-                window.warehouseAuditSession[itemName] = { status: 'missing', missing, counted: item.qty - missing };
-            }
-            renderWarehouseAuditItems();
-        });
-    }
-
-    const btnWarehouseAuditDone = document.getElementById('btnWarehouseAuditDone');
-    if (btnWarehouseAuditDone) {
-        btnWarehouseAuditDone.addEventListener('click', () => {
-            const items = getAuditActiveItems();
-            const session = window.warehouseAuditSession || {};
-            if (!items.length || items.some(item => !session[item.name] || !session[item.name].status)) {
-                alert('Please complete the audit for every active item first.');
-                return;
-            }
-            const missingPcCount = items.reduce((sum, item) => sum + Number(session[item.name].missing || 0), 0);
-            const totalPcCount = items.reduce((sum, item) => sum + Number(item.qty || 0), 0);
-            const countedPcCount = items.reduce((sum, item) => sum + Number(session[item.name].counted ?? item.qty), 0);
-            const now = new Date();
-            const record = {
-                id: `AUD-${Date.now()}`,
-                timestamp: Date.now(),
-                dateTime: now.toLocaleString(),
-                totalAuditItems: items.length,
-                totalPcCount,
-                countedPcCount,
-                missingPcCount,
-                hasMissing: missingPcCount > 0,
-                remarks: missingPcCount > 0 ? `${missingPcCount} PC missing` : 'All active items counted and matched',
-                items: items.map(item => ({ name: item.name, systemQty: item.qty, status: session[item.name].status, missing: Number(session[item.name].missing || 0), counted: Number(session[item.name].counted ?? item.qty) }))
-            };
-            const history = getWarehouseAuditHistory();
-            history.push(record);
-            saveWarehouseAuditHistory(history);
-            window.warehouseAuditSession = {};
-            renderWarehouseAuditItems();
-            renderWarehouseAuditHistory();
-            alert(missingPcCount > 0 ? `Audit saved. ${missingPcCount} PC missing.` : 'Audit completed and saved successfully.');
-        });
-    }
-
     // Remove any leftover festival themes
     document.documentElement.removeAttribute('data-festival');
     localStorage.removeItem('wms_festival_theme');
@@ -9523,8 +9788,214 @@ document.addEventListener('DOMContentLoaded', () => {
     renderDamageUI();
     renderOdaUI();
     renderInventoryPanel();
-    renderWarehouseAuditHistory();
     renderDeletedSerialsPanel();
     populateMisProductsDropdown();
     renderOrderQueueUI();
+    checkDeviceApprovalStatus();
 });
+
+
+/* ============================================================
+   WAREHOUSE AUDIT -> EXPENSES -> SWEEPER ATTENDANCE
+   Firebase Realtime Database + Firebase Storage
+   ============================================================ */
+(function initSweeperAttendanceModule(){
+    const $ = (id) => document.getElementById(id);
+    let sweeperProfile = null;
+    let sweeperMonthDate = new Date();
+    let sweeperAttendanceData = {};
+    let sweeperStream = null;
+    let sweeperStorage = null;
+
+    function waDbRef(path){
+        if (!window.db || !isFirebaseConnected) return null;
+        return db.ref('wms_data/' + path);
+    }
+
+    function pad2(n){ return String(n).padStart(2,'0'); }
+    function dateKey(d){ return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate()); }
+    function formatDate(d){ return pad2(d.getDate())+'/'+pad2(d.getMonth()+1)+'/'+d.getFullYear(); }
+    function formatTime(ts){ return new Date(ts).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true}); }
+    function escapeHtml(v){ return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
+
+    function getMonthInfo(base){
+        const y=base.getFullYear(), m=base.getMonth();
+        const first=new Date(y,m,1), last=new Date(y,m+1,0);
+        return {y,m,first,last,days:last.getDate()};
+    }
+
+    function statusForDate(key){
+        if(!sweeperProfile) return 'N/A';
+        const d=new Date(key+'T00:00:00');
+        const start=new Date(sweeperProfile.startDate+'T00:00:00');
+        if(d < start) return 'N/A';
+        const rec=sweeperAttendanceData[key];
+        if(rec && rec.status) return rec.status;
+        const now=new Date();
+        const todayKey=dateKey(now);
+        if(key > todayKey) return 'N/A';
+        if(key === todayKey && now.getHours() < 20) return 'PENDING';
+        return 'A';
+    }
+
+    function statusStyle(status){
+        if(status==='P') return 'background:#dcfce7;color:#166534;border-color:#86efac;';
+        if(status==='A') return 'background:#fee2e2;color:#991b1b;border-color:#fecaca;';
+        if(status==='N/A') return 'background:#f3f4f6;color:#6b7280;border-color:#d1d5db;';
+        return 'background:#fff7ed;color:#9a3412;border-color:#fed7aa;';
+    }
+
+    async function loadSweeperProfile(){
+        const ref=waDbRef('expenses/sweeper_attendance/profile');
+        if(!ref) return;
+        const snap=await ref.once('value');
+        sweeperProfile=snap.val()||null;
+        renderSweeperCalendar();
+    }
+
+    function listenSweeperAttendance(){
+        const ref=waDbRef('expenses/sweeper_attendance/records');
+        if(!ref) return;
+        ref.off();
+        ref.on('value',snap=>{
+            sweeperAttendanceData=snap.val()||{};
+            renderSweeperCalendar();
+        });
+    }
+
+    function renderSweeperCalendar(){
+        const root=$('sweeperCalendar');
+        const subtitle=$('sweeperAttendanceSubTitle');
+        const nameCard=$('sweeperNameCard');
+        if(!root) return;
+        if(!sweeperProfile){
+            if(nameCard) nameCard.style.display='none';
+            root.innerHTML='<div style="padding:30px;text-align:center;color:var(--text-muted);border:1px dashed var(--border-color);border-radius:12px;">Create Sweeper first. Name and start date will be saved once in Firebase.</div>';
+            if(subtitle) subtitle.textContent='No sweeper profile created yet.';
+            return;
+        }
+        if(nameCard) nameCard.style.display='block';
+        if($('sweeperNameDisplay')) $('sweeperNameDisplay').textContent=sweeperProfile.name;
+        if($('sweeperStartDateDisplay')) $('sweeperStartDateDisplay').textContent='Start Date: '+formatDate(new Date(sweeperProfile.startDate+'T00:00:00'))+' • Mumbai Branch: 11:00 AM – 8:00 PM';
+        if(subtitle) subtitle.textContent='Live Firebase attendance • '+sweeperMonthDate.toLocaleString('en-IN',{month:'long',year:'numeric'});
+
+        const {y,m,first,days}=getMonthInfo(sweeperMonthDate);
+        const weekdays=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        let html='<div style="min-width:720px;">';
+        html+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;">';
+        html+='<button type="button" class="btn-outline" id="btnSweeperPrevMonth">←</button>';
+        html+='<strong style="font-size:1.05rem;">'+sweeperMonthDate.toLocaleString('en-IN',{month:'long',year:'numeric'})+'</strong>';
+        html+='<button type="button" class="btn-outline" id="btnSweeperNextMonth">→</button></div>';
+        html+='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:7px;">';
+        weekdays.forEach(w=>html+='<div style="text-align:center;font-weight:800;font-size:.75rem;color:var(--text-muted);padding:6px;">'+w+'</div>');
+        for(let i=0;i<first.getDay();i++) html+='<div></div>';
+        let p=0,a=0,na=0,pending=0;
+        for(let day=1;day<=days;day++){
+            const d=new Date(y,m,day), key=dateKey(d), status=statusForDate(key), rec=sweeperAttendanceData[key];
+            if(status==='P')p++; else if(status==='A')a++; else if(status==='N/A')na++; else pending++;
+            html+='<div style="border:1px solid var(--border-color);border-radius:10px;padding:9px;min-height:105px;background:var(--bg-card);">';
+            html+='<div style="display:flex;justify-content:space-between;align-items:center;"><strong>'+day+'</strong><span style="font-size:.68rem;padding:3px 6px;border:1px solid;border-radius:999px;'+statusStyle(status)+'">'+status+'</span></div>';
+            if(rec && rec.time) html+='<div style="font-size:.72rem;color:var(--text-muted);margin-top:7px;">'+escapeHtml(formatTime(rec.timestamp))+'</div>';
+            if(rec && rec.photoUrl) html+='<div style="font-size:.7rem;color:#166534;margin-top:4px;">📷 Photo saved</div>';
+            if(status==='P' && rec) html+='<button type="button" data-retake-date="'+key+'" class="btn-outline" style="font-size:.68rem;padding:5px 7px;margin-top:7px;">Retake</button>';
+            if(key===dateKey(new Date()) && status!=='P' && d>=new Date(sweeperProfile.startDate+'T00:00:00')) html+='<button type="button" data-take-date="'+key+'" class="btn-primary" style="font-size:.68rem;padding:5px 7px;margin-top:7px;">📷 Take Attendance</button>';
+            html+='</div>';
+        }
+        html+='</div></div>';
+        root.innerHTML=html;
+        const sum=$('sweeperAttendanceSummary');
+        if(sum) sum.innerHTML='<div style="display:flex;gap:10px;flex-wrap:wrap;"><div style="padding:10px 14px;border-radius:10px;background:#dcfce7;color:#166534;font-weight:800;">P: '+p+'</div><div style="padding:10px 14px;border-radius:10px;background:#fee2e2;color:#991b1b;font-weight:800;">A: '+a+'</div><div style="padding:10px 14px;border-radius:10px;background:#f3f4f6;color:#6b7280;font-weight:800;">N/A: '+na+'</div><div style="padding:10px 14px;border-radius:10px;background:#fff7ed;color:#9a3412;font-weight:800;">Pending: '+pending+'</div></div>';
+        $('btnSweeperPrevMonth')?.addEventListener('click',()=>{sweeperMonthDate=new Date(y,m-1,1);renderSweeperCalendar();});
+        $('btnSweeperNextMonth')?.addEventListener('click',()=>{sweeperMonthDate=new Date(y,m+1,1);renderSweeperCalendar();});
+        root.querySelectorAll('[data-take-date],[data-retake-date]').forEach(btn=>btn.addEventListener('click',()=>openSweeperCamera(btn.dataset.takeDate||btn.dataset.retakeDate)));
+    }
+
+    async function createSweeper(){
+        if(sweeperProfile){ alert('Sweeper profile already exists: '+sweeperProfile.name); return; }
+        const name=prompt('Enter Sweeper Name:');
+        if(!name || !name.trim()) return;
+        const start=prompt('Enter Sweeper Start Date (DD/MM/YYYY):', formatDate(new Date()));
+        if(!start) return;
+        const parts=start.trim().split(/[\/.-]/);
+        if(parts.length!==3){ alert('Invalid date. Use DD/MM/YYYY.'); return; }
+        const d=new Date(Number(parts[2]),Number(parts[1])-1,Number(parts[0]));
+        if(isNaN(d.getTime())){ alert('Invalid date.'); return; }
+        const profile={name:name.trim(),startDate:dateKey(d),createdAt:Date.now(),branch:'Mumbai'};
+        const ref=waDbRef('expenses/sweeper_attendance/profile');
+        if(!ref){alert('Firebase is not connected.');return;}
+        await ref.set(profile); sweeperProfile=profile; renderSweeperCalendar();
+    }
+
+    function stopCamera(){ if(sweeperStream){sweeperStream.getTracks().forEach(t=>t.stop()); sweeperStream=null;} const modal=$('sweeperCameraModal'); if(modal) modal.remove(); }
+
+    async function openSweeperCamera(key){
+        const todayKey=dateKey(new Date());
+        if(key!==todayKey){alert('Attendance photo sirf current date ke liye li ja sakti hai.');return;}
+        const now=new Date(), mins=now.getHours()*60+now.getMinutes();
+        if(mins<11*60 || mins>20*60){alert('Mumbai Branch attendance window 11:00 AM se 8:00 PM hai.');return;}
+        if(!navigator.mediaDevices?.getUserMedia){alert('Live camera is not supported by this browser. HTTPS website use karein.');return;}
+        stopCamera();
+        const modal=document.createElement('div'); modal.id='sweeperCameraModal'; modal.style='position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;';
+        modal.innerHTML='<div style="background:#fff;border-radius:16px;padding:16px;width:min(520px,100%);"><h3 style="margin:0 0 10px;">Live Sweeper Attendance</h3><video id="sweeperVideo" autoplay playsinline muted style="width:100%;border-radius:12px;background:#111;max-height:65vh;object-fit:cover;"></video><canvas id="sweeperCanvas" style="display:none;"></canvas><div style="display:flex;gap:8px;margin-top:12px;"><button id="btnCaptureSweeper" class="btn-primary" style="flex:1;">📸 Capture & Upload</button><button id="btnCancelSweeper" class="btn-outline">Cancel</button></div><div id="sweeperCameraMsg" style="font-size:.78rem;color:#6b7280;margin-top:8px;"></div></div>';
+        document.body.appendChild(modal);
+        $('btnCancelSweeper').onclick=stopCamera;
+        try{
+            sweeperStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false});
+            $('sweeperVideo').srcObject=sweeperStream;
+        }catch(e){ modal.remove(); alert('Camera permission denied/unavailable.'); return; }
+        $('btnCaptureSweeper').onclick=()=>captureSweeperPhoto(key);
+    }
+
+    async function captureSweeperPhoto(key){
+        const video=$('sweeperVideo'), canvas=$('sweeperCanvas'), msg=$('sweeperCameraMsg'), btn=$('btnCaptureSweeper');
+        if(!video||!canvas||!video.videoWidth){alert('Camera ready nahi hai.');return;}
+        btn.disabled=true; msg.textContent='Uploading photo to Firebase...';
+        canvas.width=video.videoWidth; canvas.height=video.videoHeight; canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
+        const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.86));
+        if(!blob){btn.disabled=false;msg.textContent='Photo capture failed.';return;}
+        try{
+            if(!window.firebase || !firebase.storage){throw new Error('Firebase Storage SDK not loaded');}
+            sweeperStorage=sweeperStorage||firebase.storage();
+            const path='expenses/sweeper_attendance/'+sweeperProfile.startDate+'/'+key+'/'+Date.now()+'.jpg';
+            const snap=await sweeperStorage.ref(path).put(blob,{contentType:'image/jpeg'});
+            const url=await snap.ref.getDownloadURL();
+            const ts=Date.now();
+            const ref=waDbRef('expenses/sweeper_attendance/records/'+key);
+            await ref.set({status:'P',date:key,time:formatTime(ts),timestamp:ts,sweeperName:sweeperProfile.name,photoUrl:url,storagePath:path,branch:'Mumbai',window:'11:00-20:00'});
+            stopCamera();
+            alert('Attendance marked Present and photo saved successfully.');
+        }catch(e){console.error(e);btn.disabled=false;msg.textContent='Upload failed: '+e.message;alert('Photo upload failed. Firebase Storage Rules/permission check karein.');}
+    }
+
+    async function exportSweeperExcel(){
+        if(!sweeperProfile){alert('Create Sweeper first.');return;}
+        if(typeof XLSX==='undefined'){alert('Excel library not loaded.');return;}
+        const {y,m,days}=getMonthInfo(sweeperMonthDate), rows=[]; let p=0,a=0,na=0;
+        for(let day=1;day<=days;day++){
+            const d=new Date(y,m,day), key=dateKey(d), status=statusForDate(key), rec=sweeperAttendanceData[key];
+            if(status==='P')p++;else if(status==='A')a++;else if(status==='N/A')na++;
+            rows.push({Date:formatDate(d),Day:d.toLocaleDateString('en-IN',{weekday:'long'}),Sweeper:sweeperProfile.name,Status:status,AttendanceTime:rec?.time||'',Photo:rec?.photoUrl?'Yes':'No',Remarks:rec?.status==='P'?'Live camera attendance':'-'});
+        }
+        rows.push({}); rows.push({Date:'SUMMARY',Sweeper:sweeperProfile.name,Status:'P='+p+' | A='+a+' | N/A='+na});
+        const ws=XLSX.utils.json_to_sheet(rows), wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Sweeper Attendance');
+        XLSX.writeFile(wb,'Sweeper_Attendance_'+y+'_'+pad2(m+1)+'.xlsx');
+    }
+
+    function showWarehouseAuditPage(mode){
+        const audit=$('warehouseAuditPage'), exp=$('warehouseExpensesPage'), att=$('sweeperAttendancePage');
+        if(audit) audit.style.display=mode==='audit'?'block':'none';
+        if(exp) exp.style.display=mode==='expenses'?'block':'none';
+        if(att) att.style.display=mode==='sweeper'?'block':'none';
+    }
+
+    function initUI(){
+        $('btnWarehouseAuditPage')?.addEventListener('click',()=>showWarehouseAuditPage('audit'));
+        $('btnWarehouseExpensesPage')?.addEventListener('click',()=>showWarehouseAuditPage('expenses'));
+        $('btnSweeperAttendanceActivity')?.addEventListener('click',()=>{showWarehouseAuditPage('sweeper');loadSweeperProfile();listenSweeperAttendance();});
+        $('btnSweeperBackExpenses')?.addEventListener('click',()=>showWarehouseAuditPage('expenses'));
+        $('btnSweeperCreateName')?.addEventListener('click',createSweeper);
+        $('btnSweeperExcel')?.addEventListener('click',exportSweeperExcel);
+        $('navWarehouseAudit')?.addEventListener('click',()=>showWarehouseAuditPage('audit'));
+    }
+    if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',initUI); else initUI();
+})();

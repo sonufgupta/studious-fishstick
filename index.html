@@ -318,17 +318,17 @@ td{color:#222!important;border-color:#eee7c9!important}
                     </svg>
                     <span>Damage Register</span>
                 </a>
-                <a href="javascript:void(0);" class="nav-link" id="navWarehouseAudit">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2m-4 4v8m-3-3h6" />
-                    </svg>
-                    <span>Warehouse Audit</span>
-                </a>
                 <a href="javascript:void(0);" class="nav-link" id="navOda">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
                     </svg>
                     <span>ODA Register</span>
+                </a>
+                <a href="javascript:void(0);" class="nav-link" id="navWarehouseAudit">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v11a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2m-6 0a2 2 0 114 0m-4 4h6m-6 4h6m-6 4h3" />
+                    </svg>
+                    <span>Warehouse Audit</span>
                 </a>
             </nav>
 
@@ -346,6 +346,12 @@ td{color:#222!important;border-color:#eee7c9!important}
                     </div>
                     <input type="range" id="inputSpeakerSpeed" min="0.60" max="2.00" step="0.05" value="0.95" style="width: 100%; cursor: pointer; accent-color: var(--accent-blue); background: rgba(255,255,255,0.08); height: 4px; border-radius: 2px; outline: none; border: none; padding: 0; margin: 4px 0; display: block; -webkit-appearance: none;">
                 </div>
+                <button type="button" id="btnOpenDeviceManager" class="btn-primary" style="background: rgba(244, 196, 0, 0.08); border: 1px solid rgba(244, 196, 0, 0.2); color: var(--accent-blue); width: 100%; border-style: solid; padding: 10px; border-radius: var(--radius-sm); font-size: 0.8rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; transition: var(--transition-smooth); margin-bottom: 2px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 14px; height: 14px; stroke-width: 2.5;">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                    </svg>
+                    <span>Device Approvals</span>
+                </button>
                 <button type="button" id="btnAdminResetPortal" class="btn-primary" style="display: none; background: rgba(244, 196, 0, 0.08); border: 1px solid rgba(244, 196, 0, 0.2); color: var(--accent-rose); width: 100%; border-style: solid; padding: 10px; border-radius: var(--radius-sm); font-size: 0.8rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; transition: var(--transition-smooth);">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 14px; height: 14px; stroke-width: 2.5;">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -1217,54 +1223,6 @@ td{color:#222!important;border-color:#eee7c9!important}
                     </div>
                 </section>
 
-                <!-- WAREHOUSE AUDIT SECTION -->
-                <section class="content-section" id="sectionWarehouseAudit" style="display: none; padding: 24px; box-sizing: border-box; height: 100%; overflow-y: auto;">
-                    <div style="display: flex; flex-direction: column; gap: 20px; width: 100%;">
-                        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap;">
-                            <div>
-                                <h2 style="margin:0; font-size:1.35rem; font-weight:800; color:var(--text-primary);">Warehouse Audit</h2>
-                                <p style="margin:6px 0 0; color:var(--text-secondary); font-size:.85rem;">Count all active stock items and complete the audit.</p>
-                            </div>
-                            <button type="button" id="btnWarehouseAuditDone" class="btn-primary" disabled style="padding:10px 18px; border-radius:var(--radius-sm); font-weight:800; cursor:not-allowed; opacity:.55;">Audit Done</button>
-                        </div>
-
-                        <div style="display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); gap:20px; align-items:start;">
-                            <div class="dashboard-card" style="padding:18px; min-width:0;">
-                                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; border-bottom:1px solid var(--border-color); padding-bottom:12px; margin-bottom:10px;">
-                                    <h3 style="margin:0; font-size:1rem; font-weight:800; color:var(--accent-blue);">Active Items</h3>
-                                    <span id="warehouseAuditProgress" style="font-size:.78rem; font-weight:800; color:var(--text-secondary);">0 / 0 audited</span>
-                                </div>
-                                <div id="warehouseAuditItemsBox" style="display:flex; flex-direction:column; gap:8px;">
-                                    <div style="padding:25px; text-align:center; color:var(--text-muted);">Loading active stock...</div>
-                                </div>
-                            </div>
-
-                            <div class="dashboard-card" style="padding:18px; min-width:0;">
-                                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; border-bottom:1px solid var(--border-color); padding-bottom:12px; margin-bottom:10px;">
-                                    <h3 style="margin:0; font-size:1rem; font-weight:800; color:var(--accent-blue);">Audit History</h3>
-                                    <span id="warehouseAuditHistoryCount" style="font-size:.78rem; font-weight:800; color:var(--text-secondary);">0 records</span>
-                                </div>
-                                <div id="warehouseAuditHistoryBox" style="display:flex; flex-direction:column; gap:10px;">
-                                    <div style="padding:25px; text-align:center; color:var(--text-muted);">No audit history.</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <style>
-                        @media (max-width: 900px) {
-                            #sectionWarehouseAudit > div > div:nth-child(2) { grid-template-columns: 1fr !important; }
-                        }
-                        .warehouse-audit-row { display:grid; grid-template-columns:minmax(0,1fr) 90px auto; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid rgba(255,255,255,.06); }
-                        .warehouse-audit-actions { display:flex; gap:6px; justify-content:flex-end; flex-wrap:wrap; }
-                        .warehouse-audit-btn { border:1px solid var(--border-color); border-radius:7px; padding:6px 10px; font-size:.72rem; font-weight:800; cursor:pointer; background:transparent; color:var(--text-secondary); }
-                        .warehouse-audit-btn.ok { color:var(--accent-emerald); border-color:rgba(16,185,129,.3); background:rgba(16,185,129,.07); }
-                        .warehouse-audit-btn.missing { color:var(--accent-rose); border-color:rgba(244,63,94,.3); background:rgba(244,63,94,.07); }
-                        .warehouse-audit-btn.active { box-shadow:0 0 0 2px rgba(59,130,246,.18); }
-                        .warehouse-audit-history-card { border:1px solid var(--border-color); border-radius:10px; padding:12px; background:rgba(255,255,255,.015); }
-                        .warehouse-audit-history-card.has-missing { border-color:rgba(244,63,94,.45); background:rgba(244,63,94,.055); }
-                    </style>
-                </section>
-
                 <!-- 7. ODA REGISTER SECTION -->
                 <section class="content-section" id="sectionOda" style="display: none; padding: 24px; box-sizing: border-box; height: 100%; overflow-y: auto;">
                     <div style="display: flex; flex-direction: column; gap: 24px; width: 100%;">
@@ -1390,7 +1348,68 @@ td{color:#222!important;border-color:#eee7c9!important}
                     </div>
                 </section>
             </div>
-        </main>
+        
+
+        <section class="content-section" id="sectionWarehouseAudit" style="display:none;">
+            <div style="display:flex;flex-direction:column;gap:18px;width:100%;">
+                <div class="dashboard-card" style="padding:16px 18px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                        <div>
+                            <h2 style="margin:0;font-size:1.25rem;font-weight:800;">Warehouse Audit</h2>
+                            <div style="margin-top:4px;color:var(--text-muted);font-size:.85rem;">Audit aur Expenses ko separate activity pages mein manage karein.</div>
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                            <button type="button" id="btnWarehouseAuditPage" class="btn-primary" style="padding:9px 16px;font-weight:800;">📋 Audit</button>
+                            <button type="button" id="btnWarehouseExpensesPage" class="btn-secondary" style="padding:9px 16px;font-weight:800;">💰 Expenses</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="warehouseAuditPage" class="dashboard-card" style="padding:20px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                        <div>
+                            <h3 style="margin:0;font-size:1.15rem;font-weight:800;">Warehouse Audit</h3>
+                            <p style="margin:6px 0 0;color:var(--text-muted);">Audit page reserved for the warehouse stock-audit workflow.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="warehouseExpensesPage" class="dashboard-card" style="display:none;padding:20px;">
+                    <div style="margin-bottom:16px;">
+                        <h3 style="margin:0;font-size:1.15rem;font-weight:800;">Expenses</h3>
+                        <p style="margin:6px 0 0;color:var(--text-muted);">Expense activities</p>
+                    </div>
+                    <div id="expenseActivitiesGrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;">
+                        <button type="button" id="btnSweeperAttendanceActivity" style="text-align:left;background:var(--bg-card);border:1px solid var(--border-color);border-radius:14px;padding:18px;cursor:pointer;box-shadow:var(--shadow-sm);">
+                            <div style="font-size:1.8rem;margin-bottom:8px;">🧹</div>
+                            <div style="font-weight:800;font-size:1rem;color:var(--text-primary);">Sweeper Attendance</div>
+                            <div style="font-size:.78rem;color:var(--text-muted);margin-top:5px;">Daily live-camera attendance</div>
+                        </button>
+                    </div>
+                </div>
+
+                <div id="sweeperAttendancePage" class="dashboard-card" style="display:none;padding:20px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px;">
+                        <div>
+                            <h3 style="margin:0;font-size:1.2rem;font-weight:800;">SWEEPER ATTENDANCE</h3>
+                            <div id="sweeperAttendanceSubTitle" style="margin-top:5px;color:var(--text-muted);font-size:.85rem;"></div>
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                            <button type="button" id="btnSweeperCreateName" class="btn-primary">Create Sweeper</button>
+                            <button type="button" id="btnSweeperExcel" class="btn-secondary">📊 Excel</button>
+                            <button type="button" id="btnSweeperBackExpenses" class="btn-outline">← Expenses</button>
+                        </div>
+                    </div>
+                    <div id="sweeperNameCard" style="display:none;background:var(--bg-card);border:1px solid var(--border-color);border-radius:12px;padding:14px;margin-bottom:16px;">
+                        <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:5px;">Sweeper Name</div>
+                        <div id="sweeperNameDisplay" style="font-size:1.05rem;font-weight:800;"></div>
+                        <div id="sweeperStartDateDisplay" style="font-size:.78rem;color:var(--text-muted);margin-top:4px;"></div>
+                    </div>
+                    <div id="sweeperCalendar" style="overflow:auto;"></div>
+                    <div id="sweeperAttendanceSummary" style="margin-top:16px;"></div>
+                </div>
+            </div>
+        </section></main>
     </div>
 
     <!-- Inbound Session Configuration Modal -->
@@ -1776,15 +1795,33 @@ td{color:#222!important;border-color:#eee7c9!important}
         </div>
     </div>
 
-    <!-- Simple Password Protection -->
-    <div id="accessLockOverlay" style="display:flex; position:fixed; inset:0; background:var(--bg-primary); z-index:9999999; justify-content:center; align-items:center; padding:24px; box-sizing:border-box;">
-        <div style="max-width:420px; width:100%; background:var(--bg-card); border:1px solid var(--border-color); border-radius:var(--radius-lg); padding:34px 28px; box-shadow:0 18px 50px rgba(0,0,0,0.45); text-align:center; box-sizing:border-box;">
-            <div style="font-size:2rem; font-weight:900; color:var(--accent-blue); margin-bottom:8px; letter-spacing:0.5px;">WAREHOUSE</div>
-            <div style="font-size:1.35rem; font-weight:800; color:var(--text-primary); margin-bottom:28px;">MANAGEMENT SYSTEM</div>
-            <div style="text-align:left; margin-bottom:8px; font-size:0.78rem; color:var(--text-secondary); font-weight:700;">PASSWORD</div>
-            <input id="accessPasswordInput" type="password" inputmode="numeric" autocomplete="off" placeholder="Enter password" style="width:100%; box-sizing:border-box; padding:13px 14px; border:1px solid var(--border-color); border-radius:var(--radius-sm); background:var(--bg-primary); color:var(--text-primary); font-size:1rem; outline:none;">
-            <button type="button" id="btnUnlockOverlayWithPass" class="btn-primary" style="width:100%; margin-top:14px; padding:13px 14px; border:none; border-radius:var(--radius-sm); font-size:0.95rem; font-weight:800; cursor:pointer;">OPEN WEB</button>
-            <div id="accessOverlayStatus" style="margin-top:12px; min-height:20px; font-size:0.82rem; color:var(--text-muted); font-weight:600;"></div>
+    <!-- Access Authorization Lock Screen Overlay -->
+    <div id="accessLockOverlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg-card); z-index: 9999999; justify-content: center; align-items: center; padding: 24px; box-sizing: border-box;">
+        <div style="max-width: 480px; width: 100%; background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 32px; box-shadow: 0 12px 36px rgba(0,0,0,0.5); display: flex; flex-direction: column; align-items: center; text-align: center; gap: 20px;">
+            <div style="width: 60px; height: 60px; border-radius: 50%; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.2); display: flex; align-items: center; justify-content: center; color: var(--accent-amber);">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 32px; height: 32px; stroke-width: 2;">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+            </div>
+            
+            <h2 style="font-size: 1.5rem; font-weight: 800; color: var(--text-primary); margin: 0; font-family: inherit;">Access Authorization Required</h2>
+            <p style="color: var(--text-secondary); font-size: 0.95rem; line-height: 1.5; margin: 0; font-family: inherit;">This device is not authorized to access the Warehouse Management System. Please request approval from your system administrator.</p>
+            
+            <div style="width: 100%; background: var(--bg-card); border: 1px solid var(--border-color); padding: 12px; border-radius: var(--radius-md); font-family: var(--font-mono); font-size: 0.95rem; font-weight: 700; color: var(--accent-blue); display: flex; flex-direction: column; gap: 4px; box-sizing: border-box;">
+                <span style="font-size: 0.65rem; color: var(--text-muted); font-family: inherit; font-weight: 600; text-transform: uppercase;">Your Device ID</span>
+                <span id="accessOverlayDeviceId">DEV-0000</span>
+            </div>
+            
+            <div id="accessOverlayStatus" style="font-size: 0.85rem; font-weight: 700; color: var(--accent-amber); display: flex; align-items: center; gap: 6px; font-family: inherit;">
+                <span class="status-dot" style="background-color: var(--accent-amber); box-shadow: 0 0 8px var(--accent-amber); width: 6px; height: 6px; animation: pulse 2s infinite;"></span>
+                <span>Waiting for admin approval...</span>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 12px; width: 100%; margin-top: 10px;">
+                <button type="button" id="btnUnlockOverlayWithPass" class="btn-primary" style="width: 100%; padding: 12px; font-weight: 700; font-size: 0.9rem; cursor: pointer; border-radius: var(--radius-sm); border: none; font-family: inherit;">
+                    Authorize with Admin Password
+                </button>
+            </div>
         </div>
     </div>
 
@@ -1816,6 +1853,48 @@ td{color:#222!important;border-color:#eee7c9!important}
             </div>
         </div>
     </div>
+
+    <!-- Device Manager Modal -->
+    <div class="modal-overlay" id="deviceManagerModal">
+        <div class="modal-card" style="max-width: 650px; height: 500px; display: flex; flex-direction: column; box-sizing: border-box;">
+            <div class="modal-header" style="padding-bottom: 12px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; box-sizing: border-box;">
+                <h3 style="display: flex; align-items: center; gap: 8px; margin: 0; color: var(--accent-blue);">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 20px; height: 20px; stroke-width: 2.5;">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                    </svg>
+                    <span>Authorized Devices Manager</span>
+                </h3>
+                <button class="modal-close" id="closeDeviceManagerModalBtn" aria-label="Close modal">&times;</button>
+            </div>
+            
+            <div style="flex: 1; overflow-y: auto; margin-top: 16px; width: 100%; box-sizing: border-box;">
+                <table class="portal-table" style="width: 100%; border-collapse: collapse; text-align: left; table-layout: fixed;">
+                    <thead>
+                        <tr style="border-bottom: 2px solid var(--border-color); color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase;">
+                            <th style="padding: 10px 8px; width: 25%;">Device ID</th>
+                            <th style="padding: 10px 8px; width: 25%;">Requested At</th>
+                            <th style="padding: 10px 8px; width: 20%; text-align: center;">Speaker</th>
+                            <th style="padding: 10px 8px; width: 15%;">Status</th>
+                            <th style="padding: 10px 8px; width: 15%; text-align: right;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="deviceManagerTableBody">
+                        <!-- Populated dynamically -->
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="modal-footer" style="padding-top: 16px; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; width: 100%; box-sizing: border-box; margin-top: auto;">
+                <button type="button" class="btn-danger" id="btnClearAllDevicesBtn" style="background: rgba(244, 196, 0, 0.1); border: 1px solid rgba(244, 196, 0, 0.3); color: var(--accent-rose); padding: 8px 16px; border-radius: var(--radius-sm); font-size: 0.85rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; border-style: solid;">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="width: 14px; height: 14px; stroke-width: 2.5;">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    <span>Clear All Devices</span>
+                </button>
+                <button type="button" class="btn-secondary-link" id="closeDeviceManagerModalFooterBtn" style="border:1px solid var(--border-color); color:var(--text-secondary); background:none; border-radius:var(--radius-sm); font-weight:600; padding:10px 16px; font-size:0.9rem; cursor:pointer;">Close</button>
+            </div>
+        </div>
+    </div>
     <!-- Giant Logistics Courier Confirm Popup -->
     <div id="giantLogisticsPopup">
         <div id="giantLogisticsPopupBox">
@@ -1834,6 +1913,7 @@ td{color:#222!important;border-color:#eee7c9!important}
     <!-- Firebase SDK Compat -->
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
     <!-- PDF.js CDN -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
     <script src="app.js"></script>
