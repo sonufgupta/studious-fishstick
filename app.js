@@ -1,4 +1,4 @@
-/**
+﻿/**
 
 });
         // 0. Sync Reset Timestamp - Safe Realtime in-memory check (no infinite reload)
@@ -63,7 +63,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let isFirebaseConnected = false;
     let db = null;
-    let firebaseAuth = null;
     let cachedInboundHistory = null;
     let cachedOutboundHistory = null;
     let cachedProductWeights = null;
@@ -137,12 +136,6 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             firebase.initializeApp(firebaseConfig);
             db = firebase.database();
-            if (firebase.auth) {
-                firebaseAuth = firebase.auth();
-                firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(err => {
-                    console.warn('Firebase Auth persistence setup failed:', err);
-                });
-            }
             isFirebaseConnected = true;
             console.log("Firebase Realtime Database initialized successfully!");
         } catch (err) {
@@ -7667,68 +7660,40 @@ document.addEventListener('DOMContentLoaded', () => {
         updateConnectionStatus(false);
     }
 
-    // --- Google-only Login Gate ---
-    // No device approval, password, or admin approval is required here.
-    // Firebase Authentication is the only gate to the WMS.
+    // --- Simple Password Protection ---
     const accessLockOverlay = document.getElementById('accessLockOverlay');
-    const btnGoogleLogin = document.getElementById('btnGoogleLogin');
+    const accessPasswordInput = document.getElementById('accessPasswordInput');
+    const btnUnlockOverlayWithPass = document.getElementById('btnUnlockOverlayWithPass');
+    const accessOverlayStatus = document.getElementById('accessOverlayStatus');
 
-    function showLoginScreen() {
-        if (accessLockOverlay) accessLockOverlay.style.display = 'flex';
-    }
-
-    function hideLoginScreen() {
-        if (accessLockOverlay) accessLockOverlay.style.display = 'none';
-    }
-
-    async function signInWithGoogle() {
-        if (!firebaseAuth) {
-            alert('Google Login is not available. Please check Firebase Authentication configuration.');
-            return;
-        }
-        try {
-            if (btnGoogleLogin) {
-                btnGoogleLogin.disabled = true;
-                btnGoogleLogin.style.opacity = '0.65';
-                btnGoogleLogin.textContent = 'Opening Google...';
+    function unlockWebWithPassword() {
+        const pass = accessPasswordInput ? accessPasswordInput.value : '';
+        if (pass === '1998') {
+            if (accessLockOverlay) accessLockOverlay.style.display = 'none';
+            if (accessPasswordInput) accessPasswordInput.value = '';
+            if (accessOverlayStatus) accessOverlayStatus.textContent = '';
+        } else {
+            if (accessOverlayStatus) {
+                accessOverlayStatus.textContent = 'Incorrect password.';
+                accessOverlayStatus.style.color = 'var(--accent-rose)';
             }
-            const provider = new firebase.auth.GoogleAuthProvider();
-            provider.setCustomParameters({ prompt: 'select_account' });
-            // Redirect works reliably on Android/mobile browsers.
-            await firebaseAuth.signInWithRedirect(provider);
-        } catch (err) {
-            console.error('Google sign-in failed:', err);
-            if (btnGoogleLogin) {
-                btnGoogleLogin.disabled = false;
-                btnGoogleLogin.style.opacity = '1';
-                btnGoogleLogin.innerHTML = '<span style="width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;font-size:20px;font-weight:900;font-family:Arial,sans-serif;color:#4285F4;">G</span> Login with Google';
+            if (accessPasswordInput) {
+                accessPasswordInput.value = '';
+                accessPasswordInput.focus();
             }
-            alert('Google sign-in failed: ' + (err.message || err));
         }
     }
 
-    if (btnGoogleLogin) btnGoogleLogin.addEventListener('click', signInWithGoogle);
-
-    if (firebaseAuth) {
-        firebaseAuth.onAuthStateChanged((user) => {
-            if (user) {
-                hideLoginScreen();
-                console.log('Google authentication successful:', user.email || user.uid);
-            } else {
-                showLoginScreen();
-            }
+    if (btnUnlockOverlayWithPass) btnUnlockOverlayWithPass.addEventListener('click', unlockWebWithPassword);
+    if (accessPasswordInput) {
+        accessPasswordInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') unlockWebWithPassword();
         });
-
-        // Surface redirect errors cleanly after returning from Google.
-        firebaseAuth.getRedirectResult().catch((err) => {
-            console.error('Google redirect sign-in failed:', err);
-            showLoginScreen();
-            alert('Google sign-in failed: ' + (err.message || err));
-        });
-    } else {
-        showLoginScreen();
-        if (btnGoogleLogin) btnGoogleLogin.disabled = true;
+        setTimeout(() => accessPasswordInput.focus(), 100);
     }
+
+    // No device approval/authorization is required. Speaker remains local/browser based.
+    const deviceId = 'LOCAL';
 
     // --- Outbound First Serials Modal Controllers ---
     const outboundFirstSerialsModal = document.getElementById('outboundFirstSerialsModal');
