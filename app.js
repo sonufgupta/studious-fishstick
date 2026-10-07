@@ -9981,21 +9981,196 @@ document.addEventListener('DOMContentLoaded', () => {
         XLSX.writeFile(wb,'Sweeper_Attendance_'+y+'_'+pad2(m+1)+'.xlsx');
     }
 
+    // ==================== WAREHOUSE AUDIT ====================
+    let warehouseAuditCurrent = null;
+    let warehouseAuditHistory = [];
+    let warehouseAuditListenersReady = false;
+
+    function auditDbRef(path){
+        return waDbRef(path);
+    }
+
+    function escapeAuditText(value){
+        return escapeHtml(String(value ?? ''));
+    }
+
+    function formatAuditDateTime(ts){
+        if(!ts) return '-';
+        const d=new Date(ts);
+        return d.toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:true});
+    }
+
+    function buildAuditItemsFromInventory(){
+        const stock=getProductStockMap()||{};
+        return Object.values(stock)
+            .filter(x=>x && x.name && Number(x.serialsCount||0)>0)
+            .sort((a,b)=>String(a.name).localeCompare(String(b.name)))
+            .map((x,i)=>({
+                id:'item_'+i+'_'+btoa(unescape(encodeURIComponent(String(x.name)))).replace(/[^a-zA-Z0-9]/g,'').slice(0,24),
+                name:x.name,
+                systemQty:Number(x.serialsCount||0),
+                status:'PENDING',
+                countedQty:null,
+                missingQty:0,
+                remark:''
+            }));
+    }
+
+    async function saveAuditCurrent(){
+        const ref=auditDbRef('warehouse_audits/current');
+        if(ref && warehouseAuditCurrent) await ref.set(warehouseAuditCurrent);
+    }
+
+    function auditIsComplete(){
+        const items=warehouseAuditCurrent?.items||{};
+        const keys=Object.keys(items);
+        return keys.length>0 && keys.every(k=>['OK','MISSING'].includes(items[k]?.status));
+    }
+
+    function renderAuditStats(){
+        const el=$('auditStats'); if(!el) return;
+        const items=Object.values(warehouseAuditCurrent?.items||{});
+        const total=items.length;
+        const system=items.reduce((n,x)=>n+Number(x.systemQty||0),0);
+        const counted=items.reduce((n,x)=>n+(x.status==='OK'?Number(x.systemQty||0):x.status==='MISSING'?Number(x.countedQty||0):0),0);
+        const missing=items.reduce((n,x)=>n+Number(x.missingQty||0),0);
+        const card=(label,value,cls)=>'<div style="padding:11px;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-card);"><div style="font-size:.7rem;color:var(--text-muted);">'+label+'</div><div style="font-size:1.1rem;font-weight:900;" class="'+cls+'">'+value+'</div></div>';
+        el.innerHTML=card('Items',total,'')+card('System Qty',system,'')+card('Counted Qty',counted,'')+card('Missing Qty',missing,missing?'':'');
+    }
+
+    function renderAuditItems(){
+        const root=$('auditItemsList'); if(!root) return;
+        const items=Object.values(warehouseAuditCurrent?.items||{});
+        if(!items.length){
+            root.innerHTML='<div style="padding:24px;text-align:center;border:1px dashed var(--border-color);border-radius:12px;color:var(--text-muted);">No active stock items found for audit.</div>';
+        }else{
+            root.innerHTML=items.map(item=>{
+                const done=item.status==='OK', missing=item.status==='MISSING';
+                const status=done?'OK':missing?'MISSING':'PENDING';
+                const badgeStyle=done?'background:#dcfce7;color:#166534;border-color:#86efac':missing?'background:#fee2e2;color:#991b1b;border-color:#fca5a5':'background:#fff7ed;color:#9a3412;border-color:#fed7aa';
+                return '<div style="border:1px solid var(--border-color);border-radius:12px;padding:13px;background:var(--bg-card);">'+
+                    '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">'+
+                    '<div style="min-width:220px;flex:1;"><div style="font-weight:800;">'+escapeAuditText(item.name)+'</div><div style="font-size:.76rem;color:var(--text-muted);margin-top:4px;">System Quantity: <strong>'+Number(item.systemQty||0)+'</strong>'+(missing?' • Counted: <strong>'+Number(item.countedQty||0)+'</strong> • Missing: <strong style="color:#b91c1c;">'+Number(item.missingQty||0)+'</strong>':'')+'</div></div>'+
+                    '<span style="padding:4px 8px;border:1px solid;border-radius:999px;font-size:.7rem;font-weight:800;'+badgeStyle+'">'+status+'</span>'+
+                    '<div style="display:flex;gap:7px;flex-wrap:wrap;">'+
+                    '<button type="button" class="btn-primary" data-audit-ok="'+escapeAuditText(item.id)+'" '+(done?'disabled':'')+' style="padding:7px 12px;font-size:.75rem;">OK</button>'+
+                    '<button type="button" class="btn-outline" data-audit-missing="'+escapeAuditText(item.id)+'" '+(missing?'disabled':'')+' style="padding:7px 12px;font-size:.75rem;">Missing</button>'+
+                    '</div></div></div>';
+            }).join('');
+        }
+        root.querySelectorAll('[data-audit-ok]').forEach(btn=>btn.addEventListener('click',()=>markAuditOk(btn.dataset.auditOk)));
+        root.querySelectorAll('[data-audit-missing]').forEach(btn=>btn.addEventListener('click',()=>markAuditMissing(btn.dataset.auditMissing)));
+        const doneBtn=$('btnAuditDone'); if(doneBtn) doneBtn.disabled=!auditIsComplete();
+        renderAuditStats();
+    }
+
+    async function markAuditOk(id){
+        const item=warehouseAuditCurrent?.items?.[id]; if(!item) return;
+        item.status='OK'; item.countedQty=Number(item.systemQty||0); item.missingQty=0; item.remark='Matched physical count';
+        warehouseAuditCurrent.updatedAt=Date.now();
+        await saveAuditCurrent(); renderAuditItems();
+    }
+
+    async function markAuditMissing(id){
+        const item=warehouseAuditCurrent?.items?.[id]; if(!item) return;
+        const entered=prompt('System Qty: '+item.systemQty+'\nPhysical Counted Qty enter karein:');
+        if(entered===null) return;
+        const counted=Math.floor(Number(entered));
+        if(!Number.isFinite(counted) || counted<0 || counted>Number(item.systemQty||0)){
+            alert('Invalid counted quantity. 0 se system quantity tak value enter karein.'); return;
+        }
+        const missing=Number(item.systemQty||0)-counted;
+        item.status='MISSING'; item.countedQty=counted; item.missingQty=missing; item.remark='Physical count short by '+missing;
+        warehouseAuditCurrent.updatedAt=Date.now();
+        await saveAuditCurrent(); renderAuditItems();
+    }
+
+    async function completeWarehouseAudit(){
+        if(!auditIsComplete()){alert('Audit Done tabhi hoga jab har item ko OK ya Missing mark kiya gaya ho.');return;}
+        const items=Object.values(warehouseAuditCurrent.items||{});
+        const totalSystemQty=items.reduce((n,x)=>n+Number(x.systemQty||0),0);
+        const totalCountedQty=items.reduce((n,x)=>n+(x.status==='OK'?Number(x.systemQty||0):Number(x.countedQty||0)),0);
+        const totalMissingQty=items.reduce((n,x)=>n+Number(x.missingQty||0),0);
+        const auditId='AUD-'+Date.now();
+        const record={id:auditId,dateTime:Date.now(),totalAuditItems:items.length,totalSystemQty,totalCountedQty,totalMissingQty,status:totalMissingQty>0?'MISSING':'COMPLETED',remarks:totalMissingQty>0?'Missing PC count: '+totalMissingQty:'All physical quantities matched',items:warehouseAuditCurrent.items};
+        const histRef=auditDbRef('warehouse_audits/history/'+auditId);
+        const curRef=auditDbRef('warehouse_audits/current');
+        if(!histRef||!curRef){alert('Firebase is not connected.');return;}
+        await histRef.set(record);
+        await curRef.remove();
+        warehouseAuditCurrent=null;
+        alert(totalMissingQty>0?'Audit completed. Missing quantity: '+totalMissingQty:'Audit completed successfully. All quantities matched.');
+        renderWarehouseAudit();
+    }
+
+    function renderAuditHistory(){
+        const root=$('auditHistoryList'); if(!root) return;
+        const arr=[...warehouseAuditHistory].sort((a,b)=>Number(b.dateTime||0)-Number(a.dateTime||0));
+        if(!arr.length){root.innerHTML='<div style="padding:18px;text-align:center;color:var(--text-muted);border:1px dashed var(--border-color);border-radius:10px;">No audit history yet.</div>';return;}
+        root.innerHTML=arr.map(r=>{
+            const miss=Number(r.totalMissingQty||0)>0;
+            return '<div style="border:1px solid '+(miss?'#fca5a5':'var(--border-color)')+';border-radius:10px;padding:12px;background:'+(miss?'#fff7f7':'var(--bg-card)')+';">'+
+                '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;"><strong style="font-size:.82rem;">'+formatAuditDateTime(r.dateTime)+'</strong><span style="font-size:.68rem;font-weight:800;padding:3px 6px;border-radius:999px;border:1px solid;'+(miss?'background:#fee2e2;color:#991b1b;border-color:#fca5a5':'background:#dcfce7;color:#166534;border-color:#86efac')+'">'+(miss?'MISSING':'COMPLETED')+'</span></div>'+
+                '<div style="font-size:.75rem;color:var(--text-muted);margin-top:7px;">Items: <strong>'+Number(r.totalAuditItems||0)+'</strong> • System: <strong>'+Number(r.totalSystemQty||0)+'</strong> • Counted: <strong>'+Number(r.totalCountedQty||0)+'</strong></div>'+
+                (miss?'<div style="margin-top:7px;font-size:.76rem;font-weight:800;color:#b91c1c;">⚠ Missing PC: '+Number(r.totalMissingQty||0)+'</div>':'<div style="margin-top:7px;font-size:.76rem;color:#166534;font-weight:700;">✓ All quantities matched</div>')+
+                '<div style="margin-top:5px;font-size:.72rem;color:var(--text-muted);">'+escapeAuditText(r.remarks||'')+'</div></div>';
+        }).join('');
+    }
+
+    function listenWarehouseAudit(){
+        if(warehouseAuditListenersReady) return;
+        const cur=auditDbRef('warehouse_audits/current');
+        const hist=auditDbRef('warehouse_audits/history');
+        if(!cur||!hist) return;
+        warehouseAuditListenersReady=true;
+        cur.on('value',snap=>{
+            warehouseAuditCurrent=snap.val()||null;
+            renderAuditItems();
+        });
+        hist.on('value',snap=>{
+            const v=snap.val()||{}; warehouseAuditHistory=Object.values(v); renderAuditHistory();
+        });
+    }
+
+    async function ensureWarehouseAudit(){
+        listenWarehouseAudit();
+        const ref=auditDbRef('warehouse_audits/current');
+        if(!ref) return;
+        const snap=await ref.once('value');
+        if(snap.exists()) return;
+        const items=buildAuditItemsFromInventory();
+        if(!items.length){warehouseAuditCurrent={items:{},createdAt:Date.now(),updatedAt:Date.now()};}
+        else warehouseAuditCurrent={createdAt:Date.now(),updatedAt:Date.now(),items:Object.fromEntries(items.map(x=>[x.id,x]))};
+        await ref.set(warehouseAuditCurrent);
+    }
+
+    async function renderWarehouseAudit(){
+        await ensureWarehouseAudit();
+        renderAuditItems(); renderAuditHistory();
+    }
+
     function showWarehouseAuditPage(mode){
         const audit=$('warehouseAuditPage'), exp=$('warehouseExpensesPage'), att=$('sweeperAttendancePage');
+        const auditBtn=$('btnWarehouseAuditPage'), expBtn=$('btnWarehouseExpensesPage');
         if(audit) audit.style.display=mode==='audit'?'block':'none';
         if(exp) exp.style.display=mode==='expenses'?'block':'none';
         if(att) att.style.display=mode==='sweeper'?'block':'none';
+        if(auditBtn){auditBtn.className=mode==='audit'?'btn-primary':'btn-secondary';}
+        if(expBtn){expBtn.className=mode==='expenses'?'btn-primary':'btn-secondary';}
+        if(mode==='audit') renderWarehouseAudit();
     }
 
     function initUI(){
         $('btnWarehouseAuditPage')?.addEventListener('click',()=>showWarehouseAuditPage('audit'));
         $('btnWarehouseExpensesPage')?.addEventListener('click',()=>showWarehouseAuditPage('expenses'));
+        $('btnAuditDone')?.addEventListener('click',completeWarehouseAudit);
         $('btnSweeperAttendanceActivity')?.addEventListener('click',()=>{showWarehouseAuditPage('sweeper');loadSweeperProfile();listenSweeperAttendance();});
         $('btnSweeperBackExpenses')?.addEventListener('click',()=>showWarehouseAuditPage('expenses'));
         $('btnSweeperCreateName')?.addEventListener('click',createSweeper);
         $('btnSweeperExcel')?.addEventListener('click',exportSweeperExcel);
         $('navWarehouseAudit')?.addEventListener('click',()=>showWarehouseAuditPage('audit'));
+        // Audit is the default page whenever Warehouse Audit is opened.
+        showWarehouseAuditPage('audit');
     }
     if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',initUI); else initUI();
 })();

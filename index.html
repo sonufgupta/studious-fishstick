@@ -1365,11 +1365,29 @@ td{color:#222!important;border-color:#eee7c9!important}
                     </div>
                 </div>
 
-                <div id="warehouseAuditPage" class="dashboard-card" style="padding:20px;">
-                    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-                        <div>
-                            <h3 style="margin:0;font-size:1.15rem;font-weight:800;">Warehouse Audit</h3>
-                            <p style="margin:6px 0 0;color:var(--text-muted);">Audit page reserved for the warehouse stock-audit workflow.</p>
+                <div id="warehouseAuditPage" style="display:block;">
+                    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,360px);gap:18px;align-items:start;">
+                        <div class="dashboard-card" style="padding:20px;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
+                                <div>
+                                    <h3 style="margin:0;font-size:1.15rem;font-weight:800;">Warehouse Audit</h3>
+                                    <p style="margin:6px 0 0;color:var(--text-muted);">Staff physical stock ko system quantity ke saath verify karein.</p>
+                                </div>
+                                <button type="button" id="btnAuditDone" class="btn-primary" disabled style="padding:10px 18px;font-weight:800;">✅ Audit Done</button>
+                            </div>
+                            <div id="auditStats" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:16px;"></div>
+                            <div id="auditItemsList" style="display:flex;flex-direction:column;gap:10px;"></div>
+                        </div>
+
+                        <div class="dashboard-card" style="padding:18px;position:sticky;top:12px;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px;">
+                                <div>
+                                    <h3 style="margin:0;font-size:1.05rem;font-weight:800;">Audit History</h3>
+                                    <div style="margin-top:4px;color:var(--text-muted);font-size:.78rem;">Completed physical stock audits</div>
+                                </div>
+                                <span id="auditHistoryStatus" style="font-size:.72rem;color:var(--text-muted);">Live</span>
+                            </div>
+                            <div id="auditHistoryList" style="display:flex;flex-direction:column;gap:10px;max-height:70vh;overflow:auto;"></div>
                         </div>
                     </div>
                 </div>
