@@ -7667,65 +7667,18 @@ document.addEventListener('DOMContentLoaded', () => {
         updateConnectionStatus(false);
     }
 
-    // --- Google Login + Device Access Authorization Control ---
-    // The operational WMS data adapter remains cloud-only. Only the device identifier
-    // is persisted in the browser so an already-approved device does not become a new
-    // device after every refresh/reopen.
-    let deviceId = null;
-    try {
-        deviceId = window.localStorage.getItem('wms_device_id');
-        if (!deviceId) {
-            deviceId = 'DEV-' + Math.floor(1000 + Math.random() * 9000);
-            window.localStorage.setItem('wms_device_id', deviceId);
-        }
-    } catch (storageErr) {
-        deviceId = 'DEV-' + Math.floor(1000 + Math.random() * 9000);
-        console.warn('Browser device storage unavailable; device ID will be session-based.', storageErr);
-    }
-
+    // --- Google-only Login Gate ---
+    // No device approval, password, or admin approval is required here.
+    // Firebase Authentication is the only gate to the WMS.
     const accessLockOverlay = document.getElementById('accessLockOverlay');
-    const accessOverlayDeviceId = document.getElementById('accessOverlayDeviceId');
-    const accessOverlayStatus = document.getElementById('accessOverlayStatus');
-    const accessOverlayUser = document.getElementById('accessOverlayUser');
-    const accessOverlayEmail = document.getElementById('accessOverlayEmail');
     const btnGoogleLogin = document.getElementById('btnGoogleLogin');
-    const btnGoogleLogout = document.getElementById('btnGoogleLogout');
 
-    if (accessOverlayDeviceId) accessOverlayDeviceId.textContent = deviceId;
-
-    function setAccessStatus(type, message) {
-        if (!accessOverlayStatus) return;
-        const styles = {
-            amber: { color: 'var(--accent-amber)', bg: 'var(--accent-amber)', shadow: 'var(--accent-amber)' },
-            green: { color: 'var(--accent-emerald)', bg: 'var(--accent-emerald)', shadow: 'var(--accent-emerald)' },
-            red: { color: 'var(--accent-rose)', bg: 'var(--accent-rose)', shadow: 'var(--accent-rose)' },
-            blue: { color: 'var(--accent-blue)', bg: 'var(--accent-blue)', shadow: 'var(--accent-blue)' }
-        };
-        const st = styles[type] || styles.amber;
-        accessOverlayStatus.style.color = st.color;
-        accessOverlayStatus.innerHTML = `<span class="status-dot" style="background-color:${st.bg}; box-shadow:0 0 8px ${st.shadow}; width:6px; height:6px;${type === 'amber' ? ' animation:pulse 2s infinite;' : ''}"></span><span>${message}</span>`;
-    }
-
-    function showAccessOverlay() {
+    function showLoginScreen() {
         if (accessLockOverlay) accessLockOverlay.style.display = 'flex';
     }
 
-    function hideAccessOverlay() {
+    function hideLoginScreen() {
         if (accessLockOverlay) accessLockOverlay.style.display = 'none';
-    }
-
-    function updateGoogleLoginUI(user) {
-        if (user) {
-            if (accessOverlayUser) accessOverlayUser.style.display = 'block';
-            if (accessOverlayEmail) accessOverlayEmail.textContent = user.email || 'Google account';
-            if (btnGoogleLogin) btnGoogleLogin.style.display = 'none';
-            if (btnGoogleLogout) btnGoogleLogout.style.display = 'block';
-        } else {
-            if (accessOverlayUser) accessOverlayUser.style.display = 'none';
-            if (accessOverlayEmail) accessOverlayEmail.textContent = '—';
-            if (btnGoogleLogin) btnGoogleLogin.style.display = 'flex';
-            if (btnGoogleLogout) btnGoogleLogout.style.display = 'none';
-        }
     }
 
     async function signInWithGoogle() {
@@ -7734,256 +7687,48 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         try {
-            setAccessStatus('blue', 'Opening Google sign-in...');
-            if (btnGoogleLogin) btnGoogleLogin.disabled = true;
+            if (btnGoogleLogin) {
+                btnGoogleLogin.disabled = true;
+                btnGoogleLogin.style.opacity = '0.65';
+                btnGoogleLogin.textContent = 'Opening Google...';
+            }
             const provider = new firebase.auth.GoogleAuthProvider();
             provider.setCustomParameters({ prompt: 'select_account' });
-            // Redirect is more reliable than popup on Android/mobile browsers.
+            // Redirect works reliably on Android/mobile browsers.
             await firebaseAuth.signInWithRedirect(provider);
         } catch (err) {
             console.error('Google sign-in failed:', err);
-            setAccessStatus('red', 'Google sign-in failed. Please try again.');
-            if (btnGoogleLogin) btnGoogleLogin.disabled = false;
+            if (btnGoogleLogin) {
+                btnGoogleLogin.disabled = false;
+                btnGoogleLogin.style.opacity = '1';
+                btnGoogleLogin.innerHTML = '<span style="width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;font-size:20px;font-weight:900;font-family:Arial,sans-serif;color:#4285F4;">G</span> Login with Google';
+            }
             alert('Google sign-in failed: ' + (err.message || err));
         }
     }
 
     if (btnGoogleLogin) btnGoogleLogin.addEventListener('click', signInWithGoogle);
-    if (btnGoogleLogout) {
-        btnGoogleLogout.addEventListener('click', async () => {
-            if (!firebaseAuth) return;
-            try {
-                await firebaseAuth.signOut();
-                updateGoogleLoginUI(null);
-                showAccessOverlay();
-                setAccessStatus('amber', 'Please sign in with Google...');
-            } catch (err) {
-                console.error('Google sign-out failed:', err);
-            }
-        });
-    }
 
-    async function checkDeviceApprovalStatus(user) {
-        showAccessOverlay();
-
-        if (!isFirebaseConnected || !db || !firebaseAuth || !user) {
-            updateGoogleLoginUI(user || null);
-            if (!user) {
-                setAccessStatus('amber', 'Please sign in with Google...');
-            } else {
-                setAccessStatus('red', 'Firebase connection is unavailable. Access is blocked.');
-            }
-            return;
-        }
-
-        updateGoogleLoginUI(user);
-        setAccessStatus('blue', 'Checking device authorization...');
-
-        const deviceRef = db.ref('wms_data/devices/' + deviceId);
-        deviceRef.on('value', async (snapshot) => {
-            const device = snapshot.val();
-            if (!device) {
-                const deviceRecord = {
-                    id: deviceId,
-                    status: 'pending',
-                    requestedAt: new Date().toLocaleString(),
-                    userAgent: navigator.userAgent,
-                    uid: user.uid,
-                    email: (user.email || '').toLowerCase(),
-                    displayName: user.displayName || ''
-                };
-                try {
-                    await deviceRef.set(deviceRecord);
-                    setAccessStatus('amber', 'Waiting for admin approval...');
-                } catch (err) {
-                    console.error('Device registration failed:', err);
-                    setAccessStatus('red', 'Could not create the approval request.');
-                }
-                return;
-            }
-
-            const approvedForDifferentAccount = device.uid && device.uid !== user.uid;
-            if (approvedForDifferentAccount) {
-                setAccessStatus('red', 'Access denied: this device is approved for another Google account.');
-                return;
-            }
-
-            // Legacy approved records from the old password system are bound to the
-            // first authenticated Google account using that already-approved device.
-            if (device.status === 'approved' && !device.uid) {
-                try {
-                    await deviceRef.update({
-                        uid: user.uid,
-                        email: (user.email || '').toLowerCase(),
-                        displayName: user.displayName || ''
-                    });
-                } catch (err) {
-                    console.warn('Could not bind legacy approved device to Google account:', err);
-                }
-            }
-
-            if (device.status === 'approved') {
-                setAccessStatus('green', 'Device approved. Access granted.');
-                hideAccessOverlay();
-            } else if (device.status === 'rejected') {
-                setAccessStatus('red', 'Access denied / device approval revoked by admin.');
-                showAccessOverlay();
-            } else {
-                setAccessStatus('amber', 'Waiting for admin approval...');
-                showAccessOverlay();
-            }
-        });
-    }
-
-    // Firebase Auth is now the login gate. Device approval remains exactly the
-    // existing admin-controlled flow; the old admin-password unlock is removed.
     if (firebaseAuth) {
         firebaseAuth.onAuthStateChanged((user) => {
-            updateGoogleLoginUI(user);
-            if (!user) {
-                showAccessOverlay();
-                setAccessStatus('amber', 'Please sign in with Google...');
-                return;
+            if (user) {
+                hideLoginScreen();
+                console.log('Google authentication successful:', user.email || user.uid);
+            } else {
+                showLoginScreen();
             }
-            checkDeviceApprovalStatus(user);
+        });
+
+        // Surface redirect errors cleanly after returning from Google.
+        firebaseAuth.getRedirectResult().catch((err) => {
+            console.error('Google redirect sign-in failed:', err);
+            showLoginScreen();
+            alert('Google sign-in failed: ' + (err.message || err));
         });
     } else {
-        showAccessOverlay();
-        setAccessStatus('red', 'Firebase Authentication is not configured.');
+        showLoginScreen();
+        if (btnGoogleLogin) btnGoogleLogin.disabled = true;
     }
-
-    // --- Device Manager Modal Controllers ---
-    const btnOpenDeviceManager = document.getElementById('btnOpenDeviceManager');
-    const deviceManagerModal = document.getElementById('deviceManagerModal');
-    const closeDeviceManagerModalBtn = document.getElementById('closeDeviceManagerModalBtn');
-    const closeDeviceManagerModalFooterBtn = document.getElementById('closeDeviceManagerModalFooterBtn');
-    const deviceManagerTableBody = document.getElementById('deviceManagerTableBody');
-
-    function openDeviceManager() {
-        if (!deviceManagerModal) return;
-        deviceManagerModal.classList.add('active');
-        loadDevicesInManager();
-    }
-
-    function closeDeviceManager() {
-        if (deviceManagerModal) {
-            deviceManagerModal.classList.remove('active');
-        }
-    }
-
-    if (btnOpenDeviceManager) {
-        btnOpenDeviceManager.addEventListener('click', openDeviceManager);
-    }
-    if (closeDeviceManagerModalBtn) {
-        closeDeviceManagerModalBtn.addEventListener('click', closeDeviceManager);
-    }
-    if (closeDeviceManagerModalFooterBtn) {
-        closeDeviceManagerModalFooterBtn.addEventListener('click', closeDeviceManager);
-    }
-
-    const btnClearAllDevicesBtn = document.getElementById('btnClearAllDevicesBtn');
-    if (btnClearAllDevicesBtn) {
-        btnClearAllDevicesBtn.addEventListener('click', () => {
-            const msg = "Are you sure you want to clear all device authorization records?\n\nThis will instantly lock all other devices. You will need to sign in with Google and get admin approval again.";
-            if (!confirm(msg)) return;
-            
-            if (isFirebaseConnected && db) {
-                db.ref('wms_data/devices').set(null).then(() => {
-                    alert("All device records cleared successfully.");
-                }).catch(err => {
-                    alert("Failed to clear device records: " + err.message);
-                });
-            } else {
-                alert("Database offline. Cannot clear records.");
-            }
-        });
-    }
-
-    function loadDevicesInManager() {
-        if (!isFirebaseConnected || !db || !deviceManagerTableBody) return;
-        
-        db.ref('wms_data/devices').on('value', (snapshot) => {
-            deviceManagerTableBody.innerHTML = '';
-            const devices = snapshot.val();
-            if (!devices) {
-                deviceManagerTableBody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); font-style: italic; padding: 20px;">No device requests logged.</td></tr>';
-                return;
-            }
-
-            Object.values(devices).forEach(dev => {
-                const tr = document.createElement('tr');
-                tr.style.borderBottom = '1px solid rgba(255, 255, 255, 0.05)';
-                
-                let statusBadge = `<span style="font-size: 0.7rem; font-weight: 700; background: rgba(245, 158, 11, 0.15); color: var(--accent-amber); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(245, 158, 11, 0.2); text-transform: uppercase;">Pending</span>`;
-                if (dev.status === 'approved') {
-                    statusBadge = `<span style="font-size: 0.7rem; font-weight: 700; background: rgba(16, 185, 129, 0.15); color: var(--accent-emerald); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(16, 185, 129, 0.2); text-transform: uppercase;">Approved</span>`;
-                } else if (dev.status === 'rejected') {
-                    statusBadge = `<span style="font-size: 0.7rem; font-weight: 700; background: rgba(244, 63, 94, 0.15); color: var(--accent-rose); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(244, 63, 94, 0.2); text-transform: uppercase;">Rejected</span>`;
-                }
-
-                let speakerToggle = '';
-                if (dev.status === 'approved') {
-                    const isApproved = dev.speakerApproved ? 'checked' : '';
-                    speakerToggle = `
-                        <div style="display: flex; justify-content: center; align-items: center;">
-                            <label style="position: relative; display: inline-block; width: 34px; height: 20px; cursor: pointer;">
-                                <input type="checkbox" ${isApproved} onchange="window.toggleDeviceSpeaker('${dev.id}', this.checked)" style="opacity: 0; width: 0; height: 0; display: none;">
-                                <span style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: ${dev.speakerApproved ? 'var(--accent-emerald)' : 'rgba(255,255,255,0.1)'}; transition: .4s; border-radius: 20px;">
-                                    <span style="position: absolute; content: ''; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; transform: ${dev.speakerApproved ? 'translateX(14px)' : 'none'};"></span>
-                                </span>
-                            </label>
-                        </div>
-                    `;
-                } else {
-                    speakerToggle = `<div style="text-align: center; color: var(--text-muted); font-size: 0.75rem;">N/A</div>`;
-                }
-
-                let actionButton = '';
-                if (dev.status === 'pending') {
-                    actionButton = `
-                        <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                            <button type="button" class="btn-primary" onclick="window.setDeviceStatus('${dev.id}', 'approved')" style="padding: 4px 8px; font-size: 0.7rem; font-weight: 700; cursor: pointer; border-radius: var(--radius-sm);">Approve</button>
-                            <button type="button" class="btn-danger" onclick="window.setDeviceStatus('${dev.id}', 'rejected')" style="padding: 4px 8px; font-size: 0.7rem; font-weight: 700; cursor: pointer; border-radius: var(--radius-sm); background: rgba(244, 63, 94, 0.1); border: 1px solid rgba(244, 63, 94, 0.3); color: var(--accent-rose);">Reject</button>
-                        </div>
-                    `;
-                } else if (dev.status === 'approved') {
-                    actionButton = `
-                        <div style="display: flex; justify-content: flex-end;">
-                            <button type="button" class="btn-danger" onclick="window.setDeviceStatus('${dev.id}', 'rejected')" style="padding: 4px 8px; font-size: 0.7rem; font-weight: 700; cursor: pointer; border-radius: var(--radius-sm); background: rgba(244, 63, 94, 0.1); border: 1px solid rgba(244, 63, 94, 0.3); color: var(--accent-rose);">Revoke</button>
-                        </div>
-                    `;
-                } else {
-                    actionButton = `
-                        <div style="display: flex; justify-content: flex-end;">
-                            <button type="button" class="btn-primary" onclick="window.setDeviceStatus('${dev.id}', 'approved')" style="padding: 4px 8px; font-size: 0.7rem; font-weight: 700; cursor: pointer; border-radius: var(--radius-sm);">Approve</button>
-                        </div>
-                    `;
-                }
-
-                tr.innerHTML = `
-                    <td style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 700; padding: 12px 8px; word-break: break-word;">${dev.id}</td>
-                    <td style="font-size: 0.75rem; color: var(--text-secondary); padding: 12px 8px; word-break: break-word;">${dev.email || 'Legacy / not linked'}</td>
-                    <td style="font-size: 0.75rem; color: var(--text-secondary); padding: 12px 8px;">${dev.requestedAt || 'N/A'}</td>
-                    <td style="padding: 12px 8px;">${speakerToggle}</td>
-                    <td style="padding: 12px 8px;">${statusBadge}</td>
-                    <td style="padding: 12px 8px;">${actionButton}</td>
-                `;
-                deviceManagerTableBody.appendChild(tr);
-            });
-        });
-    }
-
-    window.setDeviceStatus = function(devId, status) {
-        if (isFirebaseConnected && db) {
-            db.ref('wms_data/devices/' + devId + '/status').set(status);
-        }
-    };
-
-    window.toggleDeviceSpeaker = function(devId, isChecked) {
-        if (isFirebaseConnected && db) {
-            db.ref('wms_data/devices/' + devId + '/speakerApproved').set(isChecked);
-        }
-    };
 
     // --- Outbound First Serials Modal Controllers ---
     const outboundFirstSerialsModal = document.getElementById('outboundFirstSerialsModal');
@@ -9639,5 +9384,4 @@ document.addEventListener('DOMContentLoaded', () => {
     renderDeletedSerialsPanel();
     populateMisProductsDropdown();
     renderOrderQueueUI();
-    checkDeviceApprovalStatus();
 });
