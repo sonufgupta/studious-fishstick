@@ -458,7 +458,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 targetSection.classList.add('active');
             }
 
-            if (targetSectionId === 'sectionInventory' || targetSectionId === 'sectionOverview') {
+            if (targetSectionId === 'sectionWarehouseAudit') {
+                // Warehouse Audit is a single-work-area module. Audit is always the default page.
+                showWarehouseAuditPage('audit');
+            } else if (targetSectionId === 'sectionInventory' || targetSectionId === 'sectionOverview') {
                 renderInventoryPanel();
             } else if (targetSectionId === 'sectionMisReport') {
                 populateMisProductsDropdown();
@@ -10152,19 +10155,25 @@ document.addEventListener('DOMContentLoaded', () => {
     function showWarehouseAuditPage(mode){
         const audit=$('warehouseAuditPage'), exp=$('warehouseExpensesPage'), att=$('sweeperAttendancePage');
         const auditBtn=$('btnWarehouseAuditPage'), expBtn=$('btnWarehouseExpensesPage');
-        if(audit) audit.style.display=mode==='audit'?'block':'none';
-        if(exp) exp.style.display=mode==='expenses'?'block':'none';
-        if(att) att.style.display=mode==='sweeper'?'block':'none';
+        // IMPORTANT: only one activity page is visible at a time.
+        if(audit) audit.style.display='none';
+        if(exp) exp.style.display='none';
+        if(att) att.style.display='none';
+        if(mode==='audit' && audit) audit.style.display='block';
+        if(mode==='expenses' && exp) exp.style.display='block';
+        if(mode==='sweeper' && att) att.style.display='block';
         if(auditBtn){auditBtn.className=mode==='audit'?'btn-primary':'btn-secondary';}
-        if(expBtn){expBtn.className=mode==='expenses'?'btn-primary':'btn-secondary';}
+        if(expBtn){expBtn.className=(mode==='expenses'||mode==='sweeper')?'btn-primary':'btn-secondary';}
         if(mode==='audit') renderWarehouseAudit();
+        if(mode==='expenses'){ /* Expenses landing page only. */ }
+        if(mode==='sweeper'){ loadSweeperProfile(); listenSweeperAttendance(); }
     }
 
     function initUI(){
         $('btnWarehouseAuditPage')?.addEventListener('click',()=>showWarehouseAuditPage('audit'));
         $('btnWarehouseExpensesPage')?.addEventListener('click',()=>showWarehouseAuditPage('expenses'));
         $('btnAuditDone')?.addEventListener('click',completeWarehouseAudit);
-        $('btnSweeperAttendanceActivity')?.addEventListener('click',()=>{showWarehouseAuditPage('sweeper');loadSweeperProfile();listenSweeperAttendance();});
+        $('btnSweeperAttendanceActivity')?.addEventListener('click',()=>showWarehouseAuditPage('sweeper'));
         $('btnSweeperBackExpenses')?.addEventListener('click',()=>showWarehouseAuditPage('expenses'));
         $('btnSweeperCreateName')?.addEventListener('click',createSweeper);
         $('btnSweeperExcel')?.addEventListener('click',exportSweeperExcel);
